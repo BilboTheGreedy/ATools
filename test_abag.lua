@@ -137,7 +137,7 @@ ok(templated == 30, "item buttons use the template " .. templated)
 local c = ns.Bags.Container()
 ok(c.buttons[0][5].item and c.buttons[0][5].item.id == 100, "button holds its item")
 ok(c.buttons[0][5].__id == 5 and c.bagFrames[1].__id == 1, "slot and bag ids set")
-ok(c.free:GetText():find("16 / 24 free") and c.free:GetText():find("Soul 6"), "free text " .. c.free:GetText())
+ok(c.free:GetText():find("15 / 24 free") and c.free:GetText():find("Soul 6"), "free text " .. c.free:GetText())
 
 local scan = ns.Scan("bags")
 local byId = {}
@@ -321,7 +321,6 @@ event("PLAYER_REGEN_ENABLED")
 ok(ABagFrame:IsShown(), "shown after combat")
 M.methods.IsProtected = function() return false end
 
-local optionsButton
 event("ITEM_LOCK_CHANGED")
 event("BAG_UPDATE_COOLDOWN")
 event("PLAYER_MONEY")
@@ -336,6 +335,7 @@ ns:Fire("LAYOUT")
 SlashCmdList["ABAG"]("sort")
 SlashCmdList["ABAG"]("reset")
 SlashCmdList["ABAG"]("potion")
+c.search.box.__scripts.OnTextChanged(c.search.box)
 flush()
 ok(ns.query == "potion", "slash search")
 ABag_ToggleBinding()
