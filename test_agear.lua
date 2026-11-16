@@ -175,6 +175,51 @@ for _, u in ipairs(ups) do
 end
 ok(kinds[112] == "craft" and kinds[120] == "raid" and kinds[101] == "dungeon", "source kinds")
 ok(#ns.Upgrades.Rows({ group = "Ring" }) == 1 and #ns.Upgrades.Rows({ type = "raid" }) == 1 and #ns.Upgrades.Rows({ level = 50 }) == 0, "filters")
+local function shape()
+	local heads, upsShown, empty, head = 0, 0, 0, nil
+	for _, d in ipairs(frame.list.data) do
+		if d.kind == "slothead" then
+			heads = heads + 1
+			if d.text == "Head" then head = d end
+		elseif d.kind == "upgrade" then
+			upsShown = upsShown + 1
+		elseif d.kind == "note" and d.text:find("Nothing better") then
+			empty = empty + 1
+		end
+	end
+	return heads, upsShown, empty, head
+end
+local heads, upsShown, empty, head = shape()
+ok(heads == 15 and head and head.worn:find("Old Helm") and head.worn:find("40"), "one block per slot with what is worn: " .. tostring(head and head.worn))
+ok(upsShown >= 4 and empty >= 5, "upgrades under their slot, empty slots say so " .. upsShown .. " " .. empty)
+local st = ns.Window.State()
+ok(st.level == "MINE" and st.view == "slots", "defaults to my level, by slot")
+function UnitLevel() return 40 end
+ns.Window.Refresh()
+heads, upsShown = shape()
+ok(heads == 15 and upsShown == 0, "nothing shown that I cannot use at my level")
+st.level = 60
+ns.Window.Refresh()
+heads, upsShown = shape()
+ok(upsShown >= 4, "any level shows them again")
+for i, d in ipairs(frame.list.data) do
+	local row = frame.list.rows[i]
+	if row and d.kind == "upgrade" then
+		ok(row.right.__text:find("needs level 55"), "marks items above my level")
+		break
+	end
+end
+frame.viewButton.__scripts.OnClick(frame.viewButton, "LeftButton")
+heads = shape()
+ok(heads == 0 and st.view == "ranked", "best overall view")
+frame.viewButton.__scripts.OnClick(frame.viewButton, "LeftButton")
+frame.list.rows[1].data = { kind = "more", group = "Ring", text = "x" }
+frame.list.rows[1].__scripts.OnClick(frame.list.rows[1], "LeftButton")
+ok(st.view == "ranked" and st.group == "Ring", "more row opens the full list for that slot")
+st.view, st.group, st.level = "slots", "ALL", "MINE"
+function UnitLevel() return 60 end
+ns.Window.Refresh()
+
 for _, row in ipairs(frame.list.rows) do
 	if row:IsShown() and row.data and row.data.kind == "upgrade" then
 		row.__scripts.OnEnter(row)
