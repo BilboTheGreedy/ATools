@@ -110,6 +110,12 @@ for _, f in ipairs(M.frames) do
 end
 ns.Pins.RefreshMini()
 
+local mob
+for npc in pairs(ns.Log.npcs) do mob = npc break end
+ok(AQuest.IsQuestMob(mob) and #AQuest.QuestsFor(mob) > 0 and not AQuest.IsQuestMob(1), "api quest mob")
+ok(AQuest.InLog(176), "api in log")
+function UnitGUID() return "Creature-0-1-2-3-" .. mob .. "-0000" end
+ok(AQuest.IsQuestUnit("target"), "api quest unit")
 ok(AQuestTracker and AQuestTracker:IsShown(), "tracker shown")
 ns.Tracker.SetTracked(176, false)
 ok(not ns.Tracker.Tracked(176), "untrack")

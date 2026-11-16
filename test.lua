@@ -205,5 +205,17 @@ flush()
 ALoot_OnCompartmentClick()
 ALoot_ToggleBinding()
 
+ok(#ALoot.AllItems() > 4000, "api items")
+ok(ALoot.SourceText(18816):find("Ragnaros"), "api source text")
+ok(#ALoot.Sources(18816) > 0 and ALoot.Sources(18816)[1].place, "api sources")
+local alch = ALoot.ProfessionRecipes("Alchemy")
+ok(#alch > 50 and alch[1].spell and alch[1].source, "api recipes " .. #alch)
+ok(#ALoot.ProfessionRecipes(197) > 50 and #ALoot.ProfessionRecipes("First Aid") > 5, "api recipes by skill")
+ALoot.WishToggle(18816)
+ok(ALoot.OnWishlist(18816), "api wishlist")
+ALoot.WishToggle(18816)
+ALoot.Open(18816)
+ALoot.Open(1)
+
 print_real(string.format("ok: %d checks, %d groups, %d sections, %d rows, %d item requests", M.checks(), totalGroups, totalSections, totalRows, M.requests))
 for k, v in pairs(kinds) do print_real("  " .. k, v) end
