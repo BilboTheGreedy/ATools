@@ -163,76 +163,26 @@ ok(AMapBar.info.__text == "10-20  Alliance", "westfall info")
 ns.Map.Go(1429)
 AMapBar.options.__scripts.OnClick(AMapBar.options, "LeftButton")
 
-ok(AMap.SetWaypoint(1429, 0.5, 0.3, "North") == true, "set waypoint")
-local wm, wx, wy, wt = AMap.GetWaypoint()
-ok(wm == 1429 and wx == 0.5 and wy == 0.3 and wt == "North", "get waypoint")
-local dist, bearing = ns.Way.Vector()
-ok(math.abs(dist - 200) < 0.01 and math.abs(bearing) < 0.001, "north waypoint distance " .. dist)
-local angle = ns.Way.Angle()
-ok(math.abs(angle) < 0.001, "arrow straight ahead")
-player.facing = math.pi / 2
-angle = ns.Way.Angle()
-ok(math.abs(angle + math.pi / 2) < 0.001, "arrow to the right when facing west")
-player.facing = 0
-AMap.SetWaypoint(1429, 30, 50)
-dist, bearing = ns.Way.Vector()
-ok(math.abs(dist - 200) < 0.01 and math.abs(bearing - math.pi / 2) < 0.001, "west waypoint bearing, percent input")
-ok(select(4, AMap.GetWaypoint()) == "Elwynn Forest 30.0, 50.0", "default title")
-ok(AMap.SetWaypoint(1429, 2000, 5) == false and AMap.SetWaypoint(nil, 1, 1) == false, "bad waypoint rejected")
-
-M.now = 0
-tickAll(1)
-ok(AMapArrow and AMapArrow:IsShown(), "arrow shown")
-ok(AMapArrow.dist.__text:find("200 yd"), "arrow distance text " .. tostring(AMapArrow.dist.__text))
-M.now = 1
-player.west = 10
-tickAll(1)
-M.now = 2
-player.west = 20
-tickAll(1)
-ok(AMapArrow.dist.__text:find("180 yd") and AMapArrow.dist.__text:find("0:18"), "eta " .. tostring(AMapArrow.dist.__text))
-AMapArrow.__scripts.OnClick(AMapArrow, "RightButton")
-AMapArrow.__scripts.OnDragStart(AMapArrow)
-AMapArrow.__scripts.OnDragStop(AMapArrow)
-
-player.instance = 1
-tickAll(1)
-ok(not AMapArrow:IsShown(), "arrow hidden on another continent")
-player.instance = 0
-local realPos = UnitPosition
-UnitPosition = function() return nil end
-tickAll(1)
-ok(not AMapArrow:IsShown(), "arrow hidden without a position")
-UnitPosition = realPos
-
-player.west = 196
-tickAll(1)
-ok(AMap.GetWaypoint() == nil and not AMapArrow:IsShown(), "cleared on arrival")
-ok(printed[#printed]:find("arrived"), "arrival message")
-ok(ns.db.way.saved == nil, "saved waypoint cleared")
-player.west = 0
-
-local pm, px, py, pt = ns.Way.Parse("45.2 61")
-ok(pm == 1429 and math.abs(px - 0.452) < 1e-9 and py == 0.61 and pt == nil, "way x y")
-pm, px, py, pt = ns.Way.Parse("45.2, 61.5 Old mine")
-ok(pm == 1429 and math.abs(py - 0.615) < 1e-9 and pt == "Old mine", "way with comma and name")
-pm, px, py, pt = ns.Way.Parse("Westfall 30 40 Farm")
-ok(pm == 1436 and px == 0.3 and pt == "Farm", "way with zone")
-pm, px = ns.Way.Parse("Nowhere 30 40")
-ok(pm == nil and px:find("unknown zone"), "way unknown zone")
-ok(ns.Way.Parse("clear") == "clear" and ns.Way.Parse("") == nil and ns.Way.Parse("hello") == nil, "way clear and junk")
-ok(ns.Way.Parse("300 20") == nil, "way out of range")
-SlashCmdList["AMAPWAY"]("Westfall 30 40 Farm")
-ok(select(4, AMap.GetWaypoint()) == "Farm" and ns.db.way.saved[1] == 1436, "slash way sets and saves")
-tickAll(1)
-SlashCmdList["AMAPWAY"]("junk")
-SlashCmdList["AMAPWAY"]("clear")
-ok(AMap.GetWaypoint() == nil, "slash way clear")
+ok(AMap.SetWaypoint(1429, 0.5, 0.3) == false and AMap.GetWaypoint() == nil, "no waypoints without AWay")
+mods.ctrl = true
+ok(ns.Map.Click("LeftButton") == false, "ctrl-click does nothing without AWay")
+mods.ctrl = false
+AMap.ClearWaypoint()
+local added, cleared = {}, 0
+AWay = {
+	Add = function(map, x, y, title) added[#added + 1] = { map, x, y, title } return #added end,
+	Clear = function() cleared = cleared + 1 end,
+	Get = function()
+		local w = added[#added]
+		if w then return w[1], w[2], w[3], w[4] end
+	end,
+}
+ok(AMap.SetWaypoint(1429, 0.5, 0.3, "North") == true and added[1][4] == "North", "forwards to AWay")
 
 mods.ctrl = true
 ok(ns.Map.Click("LeftButton") == true, "ctrl-click handled")
 mods.ctrl = false
-wm, wx, wy = AMap.GetWaypoint()
+local wm, wx, wy = AMap.GetWaypoint()
 ok(wm == 1429 and wx == 0.3 and wy == 0.4, "ctrl-click waypoint at cursor")
 sc.__scripts.OnMouseUp(sc, "RightButton")
 ns.db.map.send = true
@@ -241,6 +191,7 @@ ok(ns.Map.Click("LeftButton") == true and sent[1] == "PARTY:Elwynn Forest 30.0, 
 mods.alt = false
 ok(ns.Map.Click("LeftButton") == false, "plain click ignored")
 AMap.ClearWaypoint()
+ok(cleared == 1, "clear forwards to AWay")
 
 ok(ns.Mini.Zoom(1) == 3 and Minimap.__zoom == 3, "minimap zoom in")
 Minimap.__zoom = 5
@@ -280,12 +231,9 @@ event("PLAYER_REGEN_ENABLED")
 ok(MinimapCluster.__scale == 1.2 and WorldMapFrame.__scale == 1.1 and ns.Queued() == 0, "deferred work applied after combat")
 
 SlashCmdList["AMAP"]("unlock")
-ok(ns.db.minimap.locked == false and ns.db.way.arrowDb.locked == false, "unlock")
+ok(ns.db.minimap.locked == false, "unlock")
 SlashCmdList["AMAP"]("lock")
 ok(ns.db.minimap.locked == true, "lock")
-AMap.SetWaypoint(1429, 0.2, 0.2)
-SlashCmdList["AMAP"]("clear")
-ok(AMap.GetWaypoint() == nil, "amap clear")
 SlashCmdList["AMAP"]("reset")
 ok(ns.db.map.pos == nil and ns.db.minimap.scale == 1, "reset")
 SlashCmdList["AMAP"]("")
@@ -293,7 +241,7 @@ local n = 0
 for _, e in ipairs(ns.Options()) do
 	if e.func then e.func() n = n + 1 end
 end
-ok(n > 20, "options entries " .. n)
+ok(n > 15, "options entries " .. n)
 event("PLAYER_ENTERING_WORLD")
 tickAll(1)
 flush()
@@ -303,8 +251,6 @@ issecretvalue = function(v) return v == secret end
 ok(ns.Num(secret) == nil, "secret numbers rejected")
 local realFacing = GetPlayerFacing
 GetPlayerFacing = function() return secret end
-AMap.SetWaypoint(1429, 0.5, 0.3)
-ok(ns.Way.Angle() == nil, "secret facing gives no angle")
 tickAll(1)
 GetPlayerFacing = realFacing
 C_Map.GetPlayerMapPosition = function() return { x = secret, y = secret } end

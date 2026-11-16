@@ -47,7 +47,53 @@ function GetCraftSpellFocus() return "Runed Copper Rod" end
 function DoCraft(i) crafted[#crafted + 1] = { "craft", i } end
 function CloseCraft() closed = closed + 1 end
 
+local lines = {
+	{ "Professions", true },
+	{ "Blacksmithing", false, 150, 225 },
+	{ "Herbalism", false, 80, 150 },
+	{ "Secondary Skills", true },
+	{ "Cooking", false, 10, 75 },
+	{ "First Aid", false, 80, 150 },
+	{ "Fishing", false, 1, 75 },
+	{ "Weapon Skills", true },
+	{ "Swords", false, 300, 300 },
+}
+function GetNumSkillLines() return #lines end
+function GetSkillLineInfo(i)
+	local l = lines[i]
+	return l[1], l[2], true, l[3], 0, 0, l[4]
+end
+local combat = false
+function InCombatLockdown() return combat end
+C_Spell.GetSpellName = function(id) if id == 2656 then return "Smelting" end if id > 1000 then return nil end return "Spell " .. id end
+local templates = {}
+local realCreate = CreateFrame
+function CreateFrame(kind, name, parent, template)
+	local f = realCreate(kind, name, parent)
+	if template then
+		templates[template] = (templates[template] or 0) + 1
+		f.template = template
+	end
+	return f
+end
+M.methods.SetAttribute = function(self, k, v)
+	self.attr = self.attr or {}
+	self.attr[k] = v
+end
+local panelsHidden = 0
+function HideUIPanel() panelsHidden = panelsHidden + 1 end
+local placed = {}
+local function track(f)
+	f.SetPoint = function(_, ...) placed[f] = { ... } end
+	f.SetAlpha = function(_, a) f.alpha = a end
+	f.GetAlpha = function() return f.alpha or 1 end
+	f.GetNumPoints = function() return 1 end
+	f.GetPoint = function() return "TOPLEFT", UIParent, "TOPLEFT", 16, -116 end
+	f.IsMouseEnabled = function() return true end
+end
+
 M.load("ACore", "ACore")
+track(TradeSkillFrame)
 local ns = M.load("AProfession", "AProfession")
 event("PLAYER_LOGIN")
 flush()
@@ -60,9 +106,176 @@ ok(frame.detailList.data[1].kind == "note", "idle note")
 SlashCmdList["APROFESSION"]("")
 ok(not frame:IsShown(), "toggle closes")
 
+local Tabs, wstate = ns.Tabs, ns.Window.State()
+local function tabFor(key)
+	for _, b in ipairs(Tabs.Buttons()) do
+		if b:IsShown() and b.entry and b.entry.key == key then return b end
+	end
+end
+local function kindsOf(list)
+	local k = {}
+	for _, d in ipairs(list.data) do k[d.kind] = (k[d.kind] or 0) + 1 end
+	return k
+end
+ok(ns.db.replace == false and ns.db.blizzard == nil, "default no longer replaces the default window")
+ok(ns.Window.buttons and #ns.Window.buttons == 2, "button added to the default profession frames")
+SlashCmdList["APROFESSION"]("")
+ok(frame:IsShown() and wstate.view == "overview" and frame.overviewList:IsShown() and not frame.left:IsShown(), "opens on the overview")
+local entries = Tabs.Entries()
+ok(#entries == 6 and entries[1].key == "overview" and entries[2].key == "Blacksmithing" and entries[3].key == "Herbalism" and entries[6].key == "Fishing", "tabs from skill lines " .. #entries)
+ok(entries[2].rank == 150 and entries[2].max == 225 and entries[2].window and entries[2].spell == "Blacksmithing", "profession tab data")
+ok(not entries[3].window and not entries[6].window and entries[3].spell == nil, "gathering tabs greyed")
+ok(tabFor("overview") and tabFor("Cooking") and #Tabs.Buttons() == 6, "tab buttons built")
+for _, b in ipairs(Tabs.Buttons()) do
+	b.__scripts.OnEnter(b)
+	b.__scripts.OnLeave(b)
+end
+local ov = kindsOf(frame.overviewList)
+ok(ov.prof == 5 and ov.header == 3 and ov.info == 5, "overview cards " .. tostring(ov.prof))
+SlashCmdList["APROFESSION"]("")
+
+event("TRADE_SKILL_SHOW")
+flush()
+ok(ns.Trade.mode == "trade" and not frame:IsShown(), "opening a profession does not bring up our window")
+ok(not ns.Trade.Concealed(TradeSkillFrame) and TradeSkillFrame.alpha == nil and placed[TradeSkillFrame] == nil, "default frame left alone")
+event("TRADE_SKILL_CLOSE")
+event("TRADE_SKILL_SHOW")
+flush()
+event("TRADE_SKILL_CLOSE")
+event("TRADE_SKILL_SHOW")
+flush()
+ok(not frame:IsShown() and not ns.Trade.Concealed(TradeSkillFrame), "reopening the default window keeps working")
+ok(ns.db.chars["Tester - Realm"].Blacksmithing.recipes[1][4] ~= nil, "recipes recorded in the background")
+
+local bb = ns.Window.buttons[1]
+bb.__scripts.OnEnter(bb)
+bb.__scripts.OnLeave(bb)
+bb.__scripts.OnClick(bb, "LeftButton")
+ok(frame:IsShown() and wstate.view == "prof" and wstate.prof == "Blacksmithing" and #wstate.recipes == 4, "button opens the companion on the live profession")
+ok(frame.createButton:IsShown() and tabFor("Blacksmithing").mark:IsShown() and tabFor("Blacksmithing").dot:IsShown(), "live tab marked")
+local closedBefore = closed
+frame.close.__scripts.OnClick(frame.close, "LeftButton")
+ok(closed == closedBefore and ns.Trade.mode == "trade" and panelsHidden == 0, "closing the companion leaves the default window and session alone")
+bb.__scripts.OnClick(bb, "LeftButton")
+event("TRADE_SKILL_CLOSE")
+ok(frame:IsShown() and ns.Trade.mode == nil, "companion stays when the default window closes")
+ok(frame.recipeList.data[1].kind == "stored" and #frame.recipeList.data == 4 and not frame.createButton:IsShown(), "falls back to the recorded list")
+ok(frame.detailList.data[1].text:find("Recorded"), "recorded list is marked")
+local srow
+for _, r in ipairs(frame.recipeList.rows) do
+	if r:IsShown() and r.data and r.data.kind == "stored" and r.data.recipe.name == "Bronze Dagger" then srow = r end
+end
+srow.__scripts.OnEnter(srow)
+srow.__scripts.OnClick(srow, "LeftButton")
+ok(wstate.pick == "Bronze Dagger" and kindsOf(frame.detailList).reagent == 2, "recorded recipe shows reagents")
+
+local tb = tabFor("Herbalism")
+tb.__scripts.OnClick(tb, "LeftButton")
+ok(wstate.prof == "Herbalism" and frame.recipeList.data[1].text:find("Gathering"), "gathering tab explains itself")
+tb = tabFor("Cooking")
+tb.__scripts.OnClick(tb, "LeftButton")
+ok(wstate.prof == "Cooking" and tabFor("Cooking").mark:IsShown() and not tabFor("Herbalism").mark:IsShown(), "tab switch")
+ok(frame.recipeList.data[1].text:find("Nothing recorded"), "unrecorded profession")
+ok(next((Tabs.Casts())) == nil and not templates.SecureActionButtonTemplate, "no cast buttons in companion mode")
+tb = tabFor("overview")
+tb.__scripts.OnClick(tb, "LeftButton")
+ok(wstate.view == "overview" and frame.overviewList:IsShown(), "overview tab")
+
+ns.db.chars["Alt - Realm"] = { Tailoring = { rank = 100, max = 150, recipes = { { "Linen Cloak", 2570 } } } }
+ns.Window.Refresh()
+ov = kindsOf(frame.overviewList)
+ok(ov.craft and ov.craft >= 1 and ov.alt == 1, "craftable now and other characters " .. tostring(ov.craft))
+local sawCooldown, sawCounts, sawAlt
+for _, d in ipairs(frame.overviewList.data) do
+	if d.kind == "info" and d.text:find("Cooldown: Bronze Dagger") then sawCooldown = true end
+	if d.kind == "info" and d.text:find("4 recipes") and d.text:find("craftable now") and d.text:find("2 give skill") then sawCounts = true end
+	if d.kind == "note" and d.text == "Tailoring" and d.right:find("100 / 150") then sawAlt = true end
+end
+ok(sawCooldown and sawCounts and sawAlt, "overview counts, cooldown and alt rows")
+local function orow(pred)
+	for _, r in ipairs(frame.overviewList.rows) do
+		if r:IsShown() and r.data and pred(r.data) then return r end
+	end
+end
+for _, r in ipairs(frame.overviewList.rows) do
+	if r:IsShown() and r.data then
+		r.__scripts.OnEnter(r)
+		r.__scripts.OnLeave(r)
+	end
+end
+local card = orow(function(d) return d.kind == "prof" and d.entry.key == "First Aid" end)
+card.__scripts.OnClick(card, "LeftButton")
+ok(wstate.view == "prof" and wstate.prof == "First Aid", "card opens its tab")
+ns.Window.Select("overview")
+local quick = orow(function(d) return d.kind == "craft" end)
+local quickName = quick.data.recipe.name
+quick.__scripts.OnClick(quick, "LeftButton")
+ok(wstate.prof == "Blacksmithing" and wstate.pick == quickName, "craftable row jumps to the recipe")
+ns.Window.Select("overview")
+frame.search.box:SetText("bronze")
+frame.search.box.__scripts.OnTextChanged(frame.search.box)
+flush()
+ok(kindsOf(frame.overviewList).craft == 2, "overview search across recorded recipes")
+frame.search.box:SetText("linen")
+frame.search.box.__scripts.OnTextChanged(frame.search.box)
+flush()
+ok(frame.overviewList.data[#frame.overviewList.data].right:find("Alt"), "search finds other characters")
+frame.search.box:SetText("")
+frame.search.box.__scripts.OnTextChanged(frame.search.box)
+flush()
+ok(#ns.OptionEntries() >= 6, "option entries for the control panel")
+SlashCmdList["APROFESSION"]("overview")
+AProfession_ToggleBinding()
+ok(not frame:IsShown(), "binding toggles")
+ns.db.chars["Alt - Realm"] = nil
+
+ns.db.replace = true
+
 event("TRADE_SKILL_SHOW")
 flush()
 ok(ns.Trade.mode == "trade" and frame:IsShown(), "classic open")
+ok(ns.Trade.Concealed(TradeSkillFrame) and TradeSkillFrame.alpha == 0 and placed[TradeSkillFrame][4] == -6000, "default frame moved away in replace mode")
+local casts = Tabs.Casts()
+local n = 0
+for _ in pairs(casts) do n = n + 1 end
+ok(n == 3 and templates.SecureActionButtonTemplate == 3, "cast buttons for professions with a window " .. n)
+local function castFor(key)
+	for _, o in pairs(casts) do
+		if o.entry and o.entry.key == key then return o end
+	end
+end
+ok(castFor("Cooking").attr.type == "spell" and castFor("Cooking").attr.spell == "Cooking" and castFor("Blacksmithing").attr.type == nil, "live tab does not recast")
+ok(castFor("Herbalism") == nil and castFor("Cooking"):IsShown(), "no cast button on gathering tabs")
+local co = castFor("Cooking")
+co.__scripts.OnEnter(co)
+co.__scripts.OnLeave(co)
+co.__scripts.PostClick(co, "LeftButton", true)
+ok(ns.Window.State().prof == "Blacksmithing", "key down does not switch")
+co.__scripts.PostClick(co, "LeftButton", false)
+ok(ns.Window.State().prof == "Cooking" and frame:IsShown(), "cast tab switches the view")
+event("TRADE_SKILL_CLOSE")
+ok(frame:IsShown() and not ns.Trade.Concealed(TradeSkillFrame), "window stays while switching professions")
+ok(placed[TradeSkillFrame][1] == "TOPLEFT" and placed[TradeSkillFrame][4] == 16 and placed[TradeSkillFrame][5] == -116 and TradeSkillFrame.alpha == 1, "default frame restored where it was")
+event("TRADE_SKILL_SHOW")
+flush()
+ok(ns.Window.State().prof == "Blacksmithing" and ns.Window.State().view == "prof", "follows the profession that opened")
+
+combat = true
+event("PLAYER_REGEN_DISABLED")
+ok(not castFor("Cooking"):IsShown(), "cast buttons hidden when combat starts")
+lines[#lines + 1] = { "Tailoring", false, 5, 75 }
+table.insert(lines, 3, table.remove(lines))
+ns.Window.Refresh()
+ok(#Tabs.Buttons() == 7 and templates.SecureActionButtonTemplate == 3 and not castFor("Cooking"):IsShown(), "no secure work in combat")
+local tt = tabFor("First Aid")
+tt.__scripts.OnClick(tt, "LeftButton")
+ok(ns.Window.State().prof == "First Aid", "tabs still switch the view in combat")
+combat = false
+event("PLAYER_REGEN_ENABLED")
+ok(templates.SecureActionButtonTemplate > 3 and castFor("Cooking"):IsShown() and castFor("Tailoring"):IsShown(), "cast buttons return after combat")
+table.remove(lines, 3)
+tt = tabFor("Blacksmithing")
+tt.__scripts.OnClick(tt, "LeftButton")
 local state = ns.Window.State()
 ok(#state.recipes == 4, "classic recipes " .. #state.recipes)
 local dagger = state.byKey["Bronze Dagger"]
@@ -236,8 +449,18 @@ SlashCmdList["APROFESSION"]("cd")
 local before = closed
 frame.close.__scripts.OnClick(frame.close, "LeftButton")
 ok(closed == before + 1, "closing the window closes the profession")
+ok(panelsHidden == 1 and not ns.Trade.Concealed(TradeSkillFrame) and TradeSkillFrame.alpha == 1 and placed[TradeSkillFrame][4] == 16, "closing restores and hides the default frame")
+ok(ns.Window.State().view == "overview" and ns.Window.State().prof == nil, "nothing remembered after closing")
+local anyCast = false
+for _, o in pairs(casts) do
+	if o:IsShown() then anyCast = true end
+end
+ok(not anyCast, "cast buttons hidden with the window")
 event("TRADE_SKILL_CLOSE")
 ok(ns.Trade.mode == nil and not frame:IsShown(), "classic close")
+SlashCmdList["APROFESSION"]("")
+ok(frame:IsShown() and ns.Window.State().view == "overview", "reopens on the overview")
+SlashCmdList["APROFESSION"]("")
 
 event("CRAFT_SHOW")
 flush()
@@ -297,26 +520,80 @@ for _, d in ipairs(frame.recipeList.data) do
 end
 ok(wool, "modern unlearned recipes listed as missing")
 frame.missingButton.__scripts.OnClick(frame.missingButton, "LeftButton")
-function InCombatLockdown() return true end
+combat = true
 ok(ns.Trade.Craft(heavy, 1) == false and #modernCrafts == 1, "no crafting in combat")
-function InCombatLockdown() return false end
+combat = false
 event("TRADE_SKILL_LIST_UPDATE")
 event("BAG_UPDATE_DELAYED")
 flush()
 
-SlashCmdList["APROFESSION"]("blizzard")
-ok(ns.db.blizzard == true, "fallback to default window")
+GetNumSkillLines, GetSkillLineInfo = nil, nil
+function GetProfessions() return 1, nil, nil, 4, 5, 6 end
+function GetProfessionInfo(i)
+	if i == 1 then return "Tailoring", 136249, 200, 225, 0, 0, 197 end
+	if i == 4 then return "Fishing", 136245, 30, 75, 0, 0, 356 end
+	if i == 5 then return "Cooking", 133971, 60, 75, 0, 0, 185 end
+	return "First Aid", 135966, 80, 150, 0, 0, 129
+end
+ns.Window.Refresh()
+local modernTabs = Tabs.Entries()
+local names = {}
+for _, e in ipairs(modernTabs) do names[#names + 1] = e.key end
+ok(table.concat(names, ",") == "overview,Blacksmithing,Enchanting,Tailoring,Cooking,First Aid,Fishing", "tabs from GetProfessions plus recorded ones: " .. table.concat(names, ","))
+ok(modernTabs[4].icon == 136249 and modernTabs[4].rank == 200 and modernTabs[7].window == false, "modern profession data")
+GetProfessions, GetProfessionInfo = nil, nil
+C_SkillInfo = {
+	GetNumSkillLines = function() return 2 end,
+	GetSkillLineInfo = function(i)
+		if i == 1 then return { name = "Professions", isHeader = true } end
+		return { name = "Alchimie", skillID = 171, rank = 40, maxRank = 75 }
+	end,
+}
+local found
+for _, e in ipairs(Tabs.Entries()) do
+	if e.id == 171 and e.name == "Alchimie" and e.rank == 40 and e.spell then found = true end
+end
+ok(found, "skill lines matched by id whatever the language")
+C_SkillInfo = nil
+local opened
+C_TradeSkillUI.OpenTradeSkill = function(id) opened = id end
+ok(Tabs.Direct({ id = 185 }) and opened == 185, "direct open when the client offers it")
+combat = true
+ok(Tabs.Direct({ id = 185 }) == false, "no direct open in combat")
+combat = false
+C_TradeSkillUI.OpenTradeSkill = nil
+
+local hiddenBefore = panelsHidden
+SlashCmdList["APROFESSION"]("replace")
+ok(ns.db.replace == false and not ns.Trade.Concealed(ProfessionsFrame), "switching back to companion mode releases the default frame")
+frame.close.__scripts.OnClick(frame.close, "LeftButton")
+ok(ns.Trade.mode == "modern" and panelsHidden == hiddenBefore, "companion close leaves the session")
 event("TRADE_SKILL_CLOSE")
 event("TRADE_SKILL_SHOW")
 flush()
 ok(not frame:IsShown(), "stays hidden in default mode")
 SlashCmdList["APROFESSION"]("blizzard")
+ok(ns.db.replace == true, "old command still toggles")
 event("TRADE_SKILL_CLOSE")
 SlashCmdList["APROFESSION"]("reset")
 SlashCmdList["APROFESSION"]("linen")
 flush()
 ok(frame:IsShown(), "search from slash")
+ALoot.ProfessionRecipes = function() return { { spell = 1, item = 3490, skill = 110 }, { spell = 2, item = 7955, skill = 30 }, { spell = 3, item = 7956, skill = 125 } } end
+ns.Window.Select("overview")
+local sawMissing
+for _, d in ipairs(frame.overviewList.data) do
+	if d.kind == "info" and d.entry.key == "Blacksmithing" and d.text:find("2 missing") then sawMissing = true end
+end
+ok(sawMissing, "overview counts missing recipes from ALoot")
+local sawProfit
+for _, d in ipairs(frame.overviewList.data) do
+	if d.kind == "header" and d.text:find("most profit") then sawProfit = true end
+end
+ok(sawProfit, "craftable list sorted by profit with AAuction")
 ACoreMinimapButton.__scripts.OnClick(ACoreMinimapButton, "LeftButton")
 SlashCmdList["ACORE"]("profession")
+ACore.OpenPanel("AProfession")
+ok(ACorePanel and ACorePanel:IsShown() and #ACorePanel.list.data >= 8, "options in the control panel")
 
 print_real(string.format("ok: %d checks", M.checks()))

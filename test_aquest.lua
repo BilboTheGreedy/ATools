@@ -117,9 +117,19 @@ ok(AQuest.InLog(176), "api in log")
 function UnitGUID() return "Creature-0-1-2-3-" .. mob .. "-0000" end
 ok(AQuest.IsQuestUnit("target"), "api quest unit")
 ok(AQuestTracker and AQuestTracker:IsShown(), "tracker shown")
-ns.Tracker.SetTracked(176, false)
-ok(not ns.Tracker.Tracked(176), "untrack")
+ok(not ns.Tracker.Tracked(176) and not ns.Tracker.Tracked(7), "nothing tracked by default")
+local watch = {}
+C_QuestLog.GetQuestWatchType = function(id) return watch[id] end
+C_QuestLog.AddQuestWatch = function(id) watch[id] = 0 end
+C_QuestLog.RemoveQuestWatch = function(id) watch[id] = nil end
+watch[62] = 0
+ok(ns.Tracker.Tracked(62), "follows the game's watch list")
 ns.Tracker.SetTracked(176, true)
+ok(ns.Tracker.Tracked(176) and watch[176], "track")
+ns.Tracker.SetTracked(176, false)
+ok(not ns.Tracker.Tracked(176) and not watch[176], "untrack")
+ns.Tracker.SetTracked(176, true)
+event("QUEST_WATCH_LIST_CHANGED")
 ns.Tracker.ShowOnMap(176)
 ok(opened == 1429, "show on map " .. tostring(opened))
 for _, f in ipairs(M.frames) do

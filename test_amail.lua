@@ -313,4 +313,298 @@ ok(printed[#printed]:find("/amail"), "slash help")
 c.options.__scripts.OnClick(c.options, "LeftButton")
 ns:Fire("OPTIONS")
 
+ok(ns.db.reskin == false, "default window option toggles off")
+local closed = 0
+function CloseMail()
+	closed = closed + 1
+	MailFrame.__shown = false
+end
+function GetMoney() return 100000 end
+function GetInboxText(i) return mails[i] and ("Body of " .. mails[i].subject) or nil end
+function GetInboxItem(i, a)
+	local m = mails[i]
+	if not m or a > m.items then return nil end
+	return "Thing " .. a, 2589, 134400, 3, 2, true
+end
+function GetInboxItemLink(i, a) return "|Hitem:2589|h[Thing " .. a .. "]|h" end
+local tookSlots = {}
+function TakeInboxItem(i, a)
+	tookSlots[#tookSlots + 1] = a
+	mails[i].items = mails[i].items - 1
+	looted = looted + 1
+	tidy(i)
+end
+local deleted
+function DeleteInboxItem(i) deleted = table.remove(mails, i).subject end
+function InboxItemCanDelete(i) return mails[i].items == 0 and mails[i].money == 0 end
+function ClickSendMailItemButton(index, clear)
+	if clear then
+		if index and attached[index] then attached[index] = nil end
+	elseif cursor then
+		local at = index or (#attached + 1)
+		attached[at] = cursor
+		bag[cursor] = nil
+		cursor = nil
+	end
+end
+function GetSendMailItem(i)
+	if not attached[i] then return nil end
+	return "Sent thing " .. i, 2589, 134400, 20, 1
+end
+function GetSendMailPrice()
+	local n = 0
+	for _ in pairs(attached) do n = n + 1 end
+	return 30 + n * 30
+end
+local moneySet, codSet
+function SetSendMailMoney(c) moneySet = c end
+function SetSendMailCOD(c) codSet = c end
+function SendMail(to, subject, body)
+	local n = 0
+	for _ in pairs(attached) do n = n + 1 end
+	sent[#sent + 1] = { to = to, subject = subject, body = body, n = n, money = moneySet, cod = codSet }
+	attached = {}
+	ns.Send.Remember(to, subject)
+end
+
+ns.db.reskin = true
+ns.db.skipCod, ns.db.skipGm, ns.db.tint, ns.db.autocomplete, ns.db.keepSubject, ns.db.quick = true, true, true, true, true, true
+reset()
+fill()
+attached = {}
+taken, looted, free = 0, 0, 10
+MailFrame.__shown = true
+event("MAIL_SHOW")
+flush()
+local W = ns.Window
+local frame = AMailFrame
+ok(frame and frame:IsShown() and W.Active(), "reskinned window opens")
+ok(MailFrame:IsShown(), "default frame stays open underneath")
+ok(#frame.mailList.data == 6 and frame.mailList.data[5].h.subject == "Sold", "mail list " .. #frame.mailList.data)
+ok(frame.summary:GetText():find("6 mails"), "summary in window")
+ok(W.NameBox() == nil, "inbox tab uses no send boxes")
+for _, row in ipairs(frame.mailList.rows) do
+	if row:IsShown() and row.data then
+		row.__scripts.OnEnter(row)
+		row.__scripts.OnLeave(row)
+	end
+end
+local function rowFor(subject)
+	for _, row in ipairs(frame.mailList.rows) do
+		if row:IsShown() and row.data and row.data.h.subject == subject then return row end
+	end
+end
+local d = frame.detail
+ok(d.title:GetText():find("Pick a mail"), "empty detail")
+local r = rowFor("Stuff")
+r.__scripts.OnClick(r, "LeftButton")
+ok(d.title:GetText() == "Stuff" and d.body:GetText() == "Body of Stuff", "detail shows the mail")
+ok(d.items[1]:IsShown() and d.items[2]:IsShown() and not d.items[3]:IsShown(), "attachment buttons")
+ok(d.take:IsShown() and d.back:IsShown(), "take and return offered")
+d.items[1].__scripts.OnEnter(d.items[1])
+d.items[1].__scripts.OnLeave(d.items[1])
+d.clip.__scripts.OnMouseWheel(d.clip, -1)
+d.items[2].__scripts.OnClick(d.items[2], "LeftButton")
+ok(looted == 1 and tookSlots[1] == 2, "click takes one attachment")
+event("MAIL_INBOX_UPDATE")
+flush()
+ok(d.items[1]:IsShown() and not d.items[2]:IsShown(), "detail follows the inbox")
+d.take.__scripts.OnClick(d.take, "LeftButton")
+flush()
+ok(looted == 2, "take all " .. looted)
+event("MAIL_INBOX_UPDATE")
+flush()
+ok(#frame.mailList.data == 5 and d.title:GetText():find("Pick a mail"), "emptied mail leaves the list")
+
+accept = true
+r = rowFor("COD")
+r.__scripts.OnClick(r, "LeftButton")
+ok(d.money:GetText():find("Cash on delivery") and d.take.label:GetText() == "Pay and take", "cod detail")
+d.take.__scripts.OnClick(d.take, "LeftButton")
+ok(looted == 3, "cod taken after confirm")
+event("MAIL_INBOX_UPDATE")
+flush()
+
+reset()
+event("MAIL_INBOX_UPDATE")
+flush()
+r = rowFor("Stuff")
+r.__scripts.OnClick(r, "LeftButton")
+returnedMail = nil
+d.back.__scripts.OnClick(d.back, "LeftButton")
+ok(returnedMail == "Stuff" and #frame.mailList.data == 5, "return button")
+
+r = rowFor("Sold")
+r.__scripts.OnClick(r, "LeftButton")
+accept = false
+deleted = nil
+d.delete.__scripts.OnClick(d.delete, "LeftButton")
+ok(deleted == nil, "delete with contents waits for confirm")
+accept = true
+d.delete.__scripts.OnClick(d.delete, "LeftButton")
+ok(deleted == "Sold", "delete after confirm")
+r = rowFor("Letter")
+r.__scripts.OnClick(r, "LeftButton")
+accept = false
+d.delete.__scripts.OnClick(d.delete, "LeftButton")
+ok(deleted == "Letter", "plain letter deletes at once")
+accept = true
+
+reset()
+taken, looted = 0, 0
+event("MAIL_INBOX_UPDATE")
+flush()
+M.mods.shift = true
+r = rowFor("Sold")
+r.__scripts.OnClick(r, "LeftButton")
+flush()
+ok(taken == 1200 and looted == 1, "shift-click row takes everything")
+M.mods.shift = false
+M.mods.ctrl = true
+reset()
+event("MAIL_INBOX_UPDATE")
+flush()
+returnedMail = nil
+r = rowFor("Stuff")
+r.__scripts.OnClick(r, "LeftButton")
+ok(returnedMail == "Stuff", "ctrl-click row returns")
+M.mods.ctrl = false
+
+reset()
+taken, looted = 0, 0
+frame.goldOnly.__scripts.OnClick(frame.goldOnly, "LeftButton")
+flush()
+ok(taken == 1700, "gold only from the window " .. taken)
+reset()
+frame.openAll.__scripts.OnClick(frame.openAll, "LeftButton")
+ok(frame.openAll.label:GetText() == "Stop", "open all shows stop")
+flush()
+ok(not ns.Inbox.Running() and frame.openAll.label:GetText() == "Open all", "open all from the window")
+
+reset()
+event("MAIL_INBOX_UPDATE")
+flush()
+r = rowFor("Stuff")
+r.__scripts.OnClick(r, "LeftButton")
+d.reply.__scripts.OnClick(d.reply, "LeftButton")
+ok(W.NameBox() == frame.name.box and frame.name.box:GetText() == "Alt" and frame.subject.box:GetText() == "RE: Stuff", "reply fills the send tab")
+ok(tabClicked == 2 and frame.sendPane:IsShown() and not frame.inboxPane:IsShown(), "send tab")
+
+sent = {}
+frame.name.box:SetText("")
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 0 and printed[#printed]:find("recipient"), "send needs a recipient")
+frame.name.box:SetText("alc")
+frame.name.box.__scripts.OnTextChanged(frame.name.box)
+ok(frame.name.box:GetText() == "Alchemist", "autocomplete in the window")
+frame.name.box:SetText("al")
+frame.name.box.__scripts.OnTextChanged(frame.name.box)
+ok(frame.name.box:GetText() == "al", "backspace not completed in the window")
+frame.to.__scripts.OnClick(frame.to, "LeftButton")
+ok(clickMenu("Altbank") and frame.name.box:GetText() == "Altbank", "recipient menu fills the window")
+frame.subject.box:SetText("")
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 0 and printed[#printed]:find("subject"), "send needs a subject")
+
+fill()
+cursor = 1
+frame.slots[1].__scripts.OnClick(frame.slots[1], "LeftButton")
+cursor = 2
+frame.slots[3].__scripts.OnReceiveDrag(frame.slots[3])
+ok(frame.slots[1].entry and frame.slots[3].entry and not frame.slots[2].entry, "attachment slots")
+ok(frame.postage:GetText():find("2 / 12"), "postage line " .. frame.postage:GetText())
+frame.slots[1].__scripts.OnEnter(frame.slots[1])
+frame.slots[2].__scripts.OnEnter(frame.slots[2])
+frame.slots[1].__scripts.OnLeave(frame.slots[1])
+frame.slots[3].__scripts.OnClick(frame.slots[3], "RightButton")
+ok(not frame.slots[3].entry, "right-click removes an attachment")
+cursor = 4
+ClickSendMailItemButton()
+event("MAIL_SEND_INFO_UPDATE")
+ok(frame.slots[2].entry, "bag right-click attachments show up")
+
+frame.gold.box:SetText("2")
+frame.silver.box:SetText("5")
+frame.copper.box:SetText("7")
+frame.bodyBox:SetText("hello")
+moneySet, codSet = nil, nil
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 1 and sent[1].to == "Altbank" and sent[1].n == 2 and sent[1].money == 20507 and sent[1].body == "hello", "send with attachments and money")
+ok(sent[1].subject == "Sent thing 1", "subject defaults to the first item")
+event("MAIL_SEND_SUCCESS")
+flush()
+ok(frame.name.box:GetText() == "" and frame.bodyBox:GetText() == "" and frame.gold.box:GetText() == "", "fields clear after sending")
+ok(ns.chardb.lastTo == "Altbank", "window send is remembered")
+
+frame.name.box:SetText("Altbank")
+frame.subject.box:SetText("Pay me")
+frame.gold.box:SetText("1")
+frame.mode.__scripts.OnClick(frame.mode, "LeftButton")
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 1 and printed[#printed]:find("needs an attached item"), "cod needs an item")
+cursor = 5
+frame.slots[1].__scripts.OnClick(frame.slots[1], "LeftButton")
+moneySet, codSet = nil, nil
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 2 and sent[2].cod == 10000 and sent[2].money == nil, "cod send")
+event("MAIL_SEND_SUCCESS")
+flush()
+function GetMoney() return 10 end
+frame.name.box:SetText("Altbank")
+frame.subject.box:SetText("Too poor")
+frame.gold.box:SetText("5")
+frame.send.__scripts.OnClick(frame.send, "LeftButton")
+ok(#sent == 2 and printed[#printed]:find("not enough money"), "money check")
+function GetMoney() return 100000 end
+cursor = 6
+frame.slots[2].__scripts.OnClick(frame.slots[2], "LeftButton")
+frame.clear.__scripts.OnClick(frame.clear, "LeftButton")
+ok(not frame.slots[2].entry and frame.name.box:GetText() == "", "clear button")
+
+fill()
+sent = {}
+frame.name.box:SetText("Altbank")
+frame.all.__scripts.OnClick(frame.all, "LeftButton")
+ok(clickMenu("Cloth") and #sent == 1 and sent[1].to == "Altbank" and sent[1].n == 12, "send all from the window")
+event("MAIL_SEND_SUCCESS")
+flush()
+event("MAIL_SEND_SUCCESS")
+flush()
+ok(#sent == 2, "send all finishes")
+
+fill()
+sent = {}
+ns.chardb.lastTo = "Altbank"
+frame.tabInbox.__scripts.OnClick(frame.tabInbox, "LeftButton")
+ok(tabClicked == 1 and frame.inboxPane:IsShown() and W.NameBox() == nil, "back to inbox")
+M.mods.alt = true
+HandleModifiedItemClick("link", { GetBagAndSlot = function() return 0, 15 end })
+M.mods.alt = false
+ok(#sent == 1 and frame.sendPane:IsShown(), "quick send switches the window to send")
+event("MAIL_SEND_SUCCESS")
+flush()
+
+frame.options.__scripts.OnClick(frame.options, "LeftButton")
+ok(clickMenu("Use the default mailbox window"), "default window option")
+ok(not frame:IsShown() and closed == 0 and MailFrame:IsShown(), "option hands back the default window")
+ok(clickMenu("Use the default mailbox window") and frame:IsShown(), "option brings the reskin back")
+for _, f in ipairs(M.frames) do
+	if f == frame and f.__scripts.OnUpdate then f.__scripts.OnUpdate(f, 1) end
+end
+
+frame.close.__scripts.OnClick(frame.close, "LeftButton")
+ok(closed == 1 and not frame:IsShown(), "closing the window closes the mailbox")
+event("MAIL_CLOSED")
+MailFrame.__shown = true
+event("MAIL_SHOW")
+flush()
+ok(frame:IsShown() and frame.inboxPane:IsShown(), "reopens on the inbox")
+MailFrame.__shown = false
+event("MAIL_CLOSED")
+ok(not frame:IsShown() and closed == 1, "mailbox closing hides the window")
+ns.db.reskin = false
+MailFrame.__shown = true
+event("MAIL_SHOW")
+ok(not frame:IsShown(), "stays away when turned off")
+
 print_real(string.format("ok: %d checks (amail)", M.checks()))

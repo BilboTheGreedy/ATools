@@ -127,10 +127,10 @@ ns.Bars.Refresh()
 ok(frame.xp.left.__text == "" and frame.rep.left.__text == "", "no text")
 ns.db.text = "full"
 
-ns.db.hideBlizzard = true
+ns.db.hideDefault = true
 ns:Fire("OPTIONS")
 ok(alpha == 0, "blizzard hidden")
-ns.db.hideBlizzard = false
+ns.db.hideDefault = false
 ns:Fire("OPTIONS")
 ok(alpha == 1, "blizzard restored")
 

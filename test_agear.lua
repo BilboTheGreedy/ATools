@@ -244,4 +244,68 @@ AGear_ToggleBinding()
 AGear_ToggleBinding()
 SlashCmdList["ACORE"]("gear")
 
+local function link(id) return "|cffffffff|Hitem:" .. id .. "::::::::60:::::|h[" .. items[id].name .. "]|h|r" end
+local R = ns.Rewards
+local v = R.Verdict(link(101))
+ok(v and v.kind == "up" and v.delta > 0 and v.slot, "verdict upgrade " .. tostring(v and v.text))
+ok(R.Verdict(link(100)).kind == "same", "verdict same")
+ok(R.Verdict(link(140)) == nil and R.Verdict(nil) == nil, "verdict ignores non-gear")
+local worse = R.Verdict(link(110))
+ok(worse and (worse.kind == "down" or worse.kind == "same"), "verdict ring " .. worse.kind)
+
+local choices = { 101, 102, 140 }
+function GetNumQuestChoices() return #choices end
+function GetNumQuestRewards() return 1 end
+function GetQuestItemLink(kind, i)
+	if kind == "choice" then return link(choices[i]) end
+	return link(111)
+end
+QuestInfoRewardsFrame = { RewardButtons = {} }
+for i = 1, 4 do
+	local b = CreateFrame("Button")
+	b.type = i <= 3 and "choice" or "reward"
+	b.id = i <= 3 and i or 1
+	QuestInfoRewardsFrame.RewardButtons[i] = b
+end
+M.methods.GetID = function(self) return self.id end
+local before = #M.printed
+event("QUEST_COMPLETE")
+flush()
+local list, best = R.Quest()
+ok(best == 1 and list[1].verdict.kind == "up" and list[3].verdict == nil, "best quest reward")
+local b1, b3 = R.badges[QuestInfoRewardsFrame.RewardButtons[1]], R.badges[QuestInfoRewardsFrame.RewardButtons[3]]
+ok(b1 and b1:IsShown() and b1.best:IsShown() and b1.text.__text:sub(1, 1) == "+", "badge on the best choice")
+ok(R.badges[QuestInfoRewardsFrame.RewardButtons[2]].text.__text ~= nil and b3 and R.badges[QuestInfoRewardsFrame.RewardButtons[4]], "badges on other buttons")
+local said
+for i = before + 1, #M.printed do
+	if M.printed[i]:find("best reward") then said = true end
+end
+ok(said, "best reward announced")
+event("QUEST_DETAIL")
+event("QUEST_ITEM_UPDATE")
+flush()
+
+function GetLootRollItemLink(id) return id == 7 and link(101) or (id == 8 and link(110)) or nil end
+GroupLootFrame1 = CreateFrame("Frame")
+GroupLootFrame1.rollID = 7
+before = #M.printed
+event("START_LOOT_ROLL", 7)
+flush()
+ok(R.labels[GroupLootFrame1] and R.labels[GroupLootFrame1].__text:find("upgrade"), "roll frame label")
+said = false
+for i = before + 1, #M.printed do
+	if M.printed[i]:find("upgrade") then said = true end
+end
+ok(said, "roll upgrade announced once")
+ok(R.Roll(99) == nil, "unknown roll ignored")
+ns.db.rolls = false
+ok(R.Roll(7) == nil, "rolls option off")
+ns.db.rewards = false
+ok(R.Quest() == nil, "rewards option off")
+for _, e in ipairs(R.Options()) do
+	if e.func then e.func() e.func() end
+end
+ok(ns.db.rolls == false and ns.db.rewards == false, "options toggle back")
+ns.db.rolls, ns.db.rewards = nil, nil
+
 print_real(string.format("ok: %d checks, %d sets", M.checks(), #ns.SETS))
