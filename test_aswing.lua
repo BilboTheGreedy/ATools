@@ -24,12 +24,22 @@ C_Spell.GetSpellName = function(id)
 	local names = { [78] = "Heroic Strike", [11567] = "Heroic Strike", [75] = "Auto Shot", [5019] = "Shoot", [845] = "Cleave", [133] = "Fireball" }
 	return names[id]
 end
-local logEntry
-function CombatLogGetCurrentEventInfo() return unpack(logEntry, 1, 24) end
+function CombatLogGetCurrentEventInfo() error("combat log read") end
+function UnitClass() return "Hunter", "HUNTER" end
+function M.methods:SetWidth(w) self.__w = w end
 
 M.load("ACore", "ACore")
+ASwingDB = { profiles = { Default = { default = { "TOP", "TOP", 0, 0 } } }, stamps = {} }
 local ns = M.load("ASwing", "ASwing")
+local registered = {}
+local realRegister = ns.events.RegisterEvent
+ns.events.RegisterEvent = function(self, name)
+	registered[name] = true
+	if realRegister then return realRegister(self, name) end
+end
 event("PLAYER_LOGIN")
+ok(not registered.COMBAT_LOG_EVENT_UNFILTERED and registered.UNIT_COMBAT, "combat log is never registered")
+ok(ns.db.default[1] == "CENTER", "stale default position replaced")
 
 ns.db.target = true
 local frame = ASwingFrame
@@ -44,17 +54,6 @@ local function left(hand)
 	return s and (s.start + s.dur - clock)
 end
 local function near(a, b) return a and math.abs(a - b) < 0.001 end
-local function log(...)
-	logEntry = { ... }
-	event("COMBAT_LOG_EVENT_UNFILTERED")
-end
-local function swing(src, dst, offhand)
-	log(clock, "SWING_DAMAGE", false, src, "a", 0, 0, dst, "b", 0, 0, 50, 0, 1, 0, 0, 0, false, false, false, offhand)
-end
-local function miss(src, dst, kind, offhand)
-	log(clock, "SWING_MISSED", false, src, "a", 0, 0, dst, "b", 0, 0, kind, offhand)
-end
-
 ok(frame and not frame:IsShown(), "hidden out of combat")
 
 event("PLAYER_REGEN_DISABLED")
@@ -114,29 +113,17 @@ event("UNIT_SPELLCAST_INTERRUPTED", "player", "c", 133)
 event("UNIT_SPELLCAST_STOP", "player", "c", 133)
 ok(near(left("main"), 2), "swings resume after an interrupt")
 
-swing("P", "T", false)
-ok(ns.LogActive() and not sw.main.est and near(left("main"), 2), "combat log main hand")
-tick(0.4)
-swing("P", "T", true)
-ok(near(left("off"), 1.5) and near(left("main"), 1.6), "combat log off hand")
-miss("P", "T", "DODGE", false)
-ok(near(left("main"), 2), "combat log miss resets")
-tick(1)
-miss("T", "P", "PARRY")
-ok(near(left("main"), 0.2) or near(left("main"), 0.4), "combat log parry haste " .. tostring(left("main")))
-ok(near(left("target"), 2.4), "combat log target swing")
-swing("X", "Y", false)
-log(clock, SECRET, false, SECRET, SECRET, 0, 0, SECRET, SECRET, 0, 0, SECRET)
-log(clock, "SPELL_DAMAGE", false, "P", "a", 0, 0, "T", "b", 0, 0, 11567, "Heroic Strike", 1, 90)
-ok(near(left("main"), 2), "combat log next melee spell")
-local before = left("main")
-event("UNIT_COMBAT", "target", "WOUND", "", 40, 1)
-ok(left("main") == before, "hints ignored while the combat log works")
-tick(2.5)
-ok(sw.main and ns.bars.main:IsShown(), "bar waits for the log event")
-tick(1.2)
-ok(not sw.main, "bar clears when no swing follows")
-ns.state.logSeen = 0
+event("UNIT_SPELLCAST_START", "player", "c7", 133)
+event("UNIT_SPELLCAST_SUCCEEDED", "player", "proc", 9999)
+ok(not sw.main and ns.state.casting, "another spell succeeding does not end the cast")
+event("UNIT_SPELLCAST_FAILED", "player", "other", 9999)
+ok(not sw.main and ns.state.casting, "another spell failing does not end the cast")
+event("UNIT_SPELLCAST_SUCCEEDED", "player", "c7", 133)
+ok(near(left("main"), 2) and sw.main.est, "the cast itself resumes the swings")
+event("UNIT_SPELLCAST_START", "player", "a1", 75)
+ok(sw.main and not ns.state.casting, "auto shot is not treated as a cast")
+event("COMBAT_LOG_EVENT_UNFILTERED")
+ok(near(left("main"), 2), "combat log events are ignored")
 
 event("PLAYER_LEAVE_COMBAT")
 ns.Start("main", true)
@@ -155,6 +142,14 @@ event("UNIT_SPELLCAST_SUCCEEDED", "player", "s", 5019)
 ok(near(left("ranged"), 3), "wand shot")
 event("PLAYER_EQUIPMENT_CHANGED")
 ok(sw.ranged.est, "equipment change restarts ranged")
+ok(ns.bars.ranged.clip:IsShown() and near(ns.bars.ranged.clip.__w, 218 * 0.5 / 3), "auto shot window " .. tostring(ns.bars.ranged.clip.__w))
+ns.db.clip = false
+ns.Apply()
+ok(not ns.bars.ranged.clip:IsShown(), "auto shot window off")
+ns.db.clip = true
+event("UNIT_SPELLCAST_START", "player", "aim", 19434)
+event("UNIT_SPELLCAST_SUCCEEDED", "player", "aim", 19434)
+ok(near(left("ranged"), 3) and sw.ranged.est, "a cast restarts the ranged timer")
 tick(3.1)
 ok(not sw.ranged, "ranged bar clears")
 event("STOP_AUTOREPEAT_SPELL")
@@ -176,7 +171,8 @@ ok(not sw.target, "target change clears target swing")
 local real = speeds.main
 speeds.main = SECRET
 ns.Start("main", false)
-ok(not sw.main, "secret attack speed is not used")
+ok(sw.main and sw.main.dur == real, "secret attack speed falls back to the last known speed")
+ns.Stop("main")
 speeds.main = 0
 ns.Start("main", false)
 ok(not sw.main, "zero speed ignored")
@@ -224,7 +220,29 @@ ns.Start("off", false)
 tick(0.5)
 ok(ns.bars.off.right.__text == "" and ns.bars.off.left.__text == "", "compact bar without text")
 SlashCmdList["ASWING"]("")
-for _, a in ipairs(ACore.addons) do if a.name == "ASwing" then a.toggle() end end
+ns.db.time = true
+ns.db.total = true
+ns.db.height = 12
+ns.db.labels = false
+ns.Apply()
+tick(0.1)
+ok(ns.bars.off.right.__text:find(" / 1.5") and ns.bars.off.left.__text == "", "total time text and hidden names")
+ns.ColorMenu("off")
+ns.db.colors.off = "green"
+ns.Apply()
+ok(ns.bars.off.__color[2] > 0.8 and ns.bars.off.__color[1] < 0.5, "per hand colour")
+ns.db.colors.off = "nonsense"
+ns.Apply()
+for _, a in ipairs(ACore.addons) do
+	if a.name == "ASwing" then
+		a.toggle()
+		local opts = a.options()
+		ok(#opts > 25, "panel options " .. #opts)
+		for _, e in ipairs(opts) do
+			if e.func and e.text:find("^Main hand: ") then e.func() end
+		end
+	end
+end
 flush()
 
 print_real(string.format("ok: %d checks (aswing)", M.checks()))

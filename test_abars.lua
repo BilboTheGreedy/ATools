@@ -136,6 +136,30 @@ function SetOverrideBindingClick(_, _, key, name)
 	overrides[key] = name
 end
 
+local clock = 50
+function GetTime() return clock end
+local cursor
+function GetCursorInfo() return cursor end
+C_ActionBar = {
+	GetOverrideBarIndex = function() return 18 end,
+	GetVehicleBarIndex = function() return 16 end,
+	GetTempShapeshiftBarIndex = function() return 17 end,
+}
+local petPicked
+function PickupPetAction(i) petPicked = i end
+function GetActionInfo(slot) if slot == 1 then return "spell", 777 end end
+local parents = setmetatable({}, { __mode = "k" })
+local baseParent = M.methods.SetParent
+function M.methods:SetParent(parent)
+	parents[self] = parent
+	return baseParent(self, parent)
+end
+function M.methods:GetParent() return parents[self] or self.__parent end
+function M.methods:GetFont() return "Fonts\\FRIZQT__.TTF", 10, "" end
+local fonts = setmetatable({}, { __mode = "k" })
+function M.methods:SetFont(_, size) fonts[self] = size end
+MicroMenuContainer = M.obj("Frame")
+BagsBar = M.obj("Frame")
 MainMenuBar = M.obj("Frame")
 MultiBarBottomLeft = M.obj("Frame")
 StanceBar = M.obj("Frame")
@@ -143,7 +167,9 @@ PetActionBar = M.obj("Frame")
 for i = 1, 12 do _G["ActionButton" .. i] = M.obj("Button") end
 
 M.load("ACore", "ACore")
-ABarsDB = { profiles = { ["Other - Realm"] = { locked = true, bars = { bar1 = { count = 6, cols = 3, size = 44, enabled = true } } } } }
+ABarsDB = { profiles = {
+	["Other - Realm"] = { locked = true, hideBlizzard = false, bars = { bar1 = { count = 6, cols = 3, size = 44, enabled = true, default = { "TOP", "TOP", 1, 1 } } } },
+} }
 local ns = M.load("ABars", "ABars")
 event("PLAYER_LOGIN")
 flush()
@@ -339,6 +365,8 @@ ns.ProfileMenu()
 ok(ns.CopyProfile("Nobody - Realm") == false and ns.CopyProfile(ns.charKey) == false, "copy rejects bad source")
 ok(ns.CopyProfile("Other - Realm"), "copy profile")
 ok(ns.p.bars.bar1.count == 6 and ns.p.bars.bar1.size == 44 and ns.p.bars.bar2.count == 12, "copied and filled")
+ok(ns.p.bars.bar1.default[1] == "BOTTOM", "stale default position replaced")
+ok(ns.p.hideBlizzard == nil and ns.p.blizzard.main == false and ns.p.blizzard.pet == false, "old hide flag migrated")
 ok(ABarsDB.profiles["Default"] == ns.p and ABarsDB.profiles["Other - Realm"].bars.bar1 ~= ns.p.bars.bar1, "profiles stay separate")
 ok(ns.bars.bar1.count == 6 and not ABarsBar1Button7.active, "copied layout applied")
 ns.ResetProfile()
@@ -348,6 +376,135 @@ for _, cmd in ipairs({ "", "unlock", "lock", "bind", "bind", "reset", "help", "m
 	SlashCmdList["ABARS"](cmd)
 end
 ok(ns.p.locked and not ns.bindMode, "slash commands")
+ok(drivers[ABarsBar1].page:find("^%[overridebar%]18;%[vehicleui%]%[possessbar%]16;%[shapeshift%]17;"), "override paging " .. drivers[ABarsBar1].page)
+ok(b1:GetAttribute("checkselfcast") == true, "self cast attribute")
+
+autocast = nil
+pet2.__scripts.PostClick(pet2, "RightButton", true)
+ok(autocast == nil, "autocast not toggled on key down")
+pet2.__scripts.PostClick(pet2, "RightButton", false)
+ok(autocast == 2, "autocast toggled on release")
+pet2.__scripts.OnDragStart(pet2)
+ok(petPicked == nil, "pet drag needs the modifier")
+pet2.__scripts.OnReceiveDrag(pet2)
+ok(petPicked == 2, "pet drop")
+
+placed = nil
+cursor = "spell"
+local b8 = ABarsBar1Button8
+b8.__scripts.PreClick(b8, "LeftButton", true)
+ok(b8:GetAttribute("type") == "empty", "click with a held spell does not use the button")
+b8.__scripts.PostClick(b8, "LeftButton", true)
+ok(placed == 8 and b8:GetAttribute("type") == "action", "click drops the held spell")
+placed = nil
+b8.__scripts.PreClick(b8, "LeftButton", false)
+ok(b8:GetAttribute("type") == "empty", "release after a drop is swallowed")
+b8.__scripts.PostClick(b8, "LeftButton", false)
+ok(placed == nil and b8:GetAttribute("type") == "action", "release after a drop does not place again")
+b8.__scripts.OnReceiveDrag(b8)
+ok(placed == nil, "release after a click drop is not a second drop")
+clock = clock + 1
+b8.__scripts.OnReceiveDrag(b8)
+ok(placed == 8, "later drag drop still places")
+placed = nil
+b8.__scripts.PreClick(b8, "LeftButton", true)
+b8.__scripts.PostClick(b8, "LeftButton", true)
+ok(placed == 8, "drop on press")
+placed = nil
+b8.__scripts.OnReceiveDrag(b8)
+ok(placed == nil, "release before the click ends is not a second drop")
+b8.__scripts.PreClick(b8, "LeftButton", false)
+b8.__scripts.PostClick(b8, "LeftButton", false)
+clock = clock + 1
+cursor = nil
+b8.__scripts.PreClick(b8, "LeftButton", true)
+ok(b8:GetAttribute("type") == "action", "normal click keeps the action type")
+b8.__scripts.PostClick(b8, "LeftButton", true)
+over[b8] = true
+M.mods.shift = true
+b8.__scripts.PreClick(b8, "LeftButton", true)
+ok(b8:GetAttribute("useOnKeyDown") == false, "pickup key press does not cast on mouse down")
+b8.__scripts.PostClick(b8, "LeftButton", true)
+ok(b8:GetAttribute("useOnKeyDown") == false, "still held until release")
+picked = nil
+b8.__scripts.OnDragStart(b8)
+ok(picked == 8 and b8:GetAttribute("useOnKeyDown") == nil, "drag restores key down casting")
+b8.__scripts.PreClick(b8, "Keybind", true)
+ok(b8:GetAttribute("useOnKeyDown") == nil, "key presses keep casting on key down")
+b8.__scripts.PostClick(b8, "Keybind", true)
+b8.__scripts.PreClick(b8, "LeftButton", true)
+b8.__scripts.PostClick(b8, "LeftButton", true)
+b8.__scripts.PreClick(b8, "LeftButton", false)
+b8.__scripts.PostClick(b8, "LeftButton", false)
+ok(b8:GetAttribute("useOnKeyDown") == nil, "release restores key down casting")
+M.mods.shift = false
+over[b8] = nil
+flush()
+
+actions[9] = { texture = SECRET, usable = true }
+ns.Button.UpdateAll("action")
+ok(ABarsBar1Button9.has, "secret texture counts as an action")
+actions[9] = nil
+
+local durations = 0
+function M.methods:SetCooldownFromDurationObject(d) if d == "dur" then durations = durations + 1 end end
+C_ActionBar.GetActionCooldownDuration = function() return "dur" end
+C_ActionBar.GetActionDisplayCount = function(slot) if slot == 3 then return "7" end return SECRET end
+ns.Button.UpdateAll("action")
+ok(durations > 0, "cooldowns use duration objects")
+ok(ABarsBar1Button3.count:GetText() == "7" and b1.count:GetText() == SECRET, "display count passed through")
+C_ActionBar.GetActionCooldownDuration = nil
+C_ActionBar.GetActionDisplayCount = nil
+ns.Button.UpdateAll("action")
+
+event("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", 777)
+ok(b1.lit and not ABarsBar1Button2.lit, "proc highlight")
+event("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", SECRET)
+event("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", 777)
+ok(not b1.lit, "proc highlight ends")
+
+ns.p.textSize = 14
+ns.p.bars.bar3.clickThrough = true
+ns.LayoutAll()
+ok(fonts[b1.hotkey] == 14, "text size applied")
+ns.p.textSize = 0
+ns.LayoutAll()
+ok(fonts[b1.hotkey] == 10, "text size back to default")
+
+local mover
+for _, m in ipairs(ACore.movers) do
+	if m.frame == ABarsBar2 then mover = m end
+end
+ok(mover and mover.db == ns.p.bars.bar2 and mover.label == "ABars Bar 2", "bar registered with layout mode")
+ok(rawget(ABarsBar2, "Restore"), "bar restores from layout mode")
+ok(ns.SetLocked(false), "unlock before layout mode")
+ok(ACore.LayoutMode(true) and ns.p.locked and not ns.handles.bar2:IsShown(), "layout mode replaces the drag handles")
+ACore.ScaleMover(mover, 1.5)
+ok(ns.p.bars.bar2.scale == 1.5 and ns.p.bars.bar2.pos[1] == "CENTER", "layout mode resizes the bar")
+ACore.ResetMover(mover)
+ok(ns.p.bars.bar2.pos == nil and ns.p.bars.bar2.scale == 1, "layout mode reset")
+ok(ns.SetLocked(false) and not ACore.LayoutActive(), "unlocking leaves layout mode")
+ns.SetLocked(true)
+
+ok(parents[MainMenuBar] == ABarsHidden and parents[PetActionBar] == ABarsHidden, "default bars parked")
+ok(parents[MicroMenuContainer] ~= ABarsHidden and parents[BagsBar] ~= ABarsHidden, "micro menu and bags left alone")
+ns.p.blizzard.micro = true
+ns.p.blizzard.bags = true
+ns.HideBlizzard()
+ok(parents[MicroMenuContainer] == ABarsHidden and parents[BagsBar] == ABarsHidden, "micro menu and bags hidden")
+ns.p.blizzard.micro = false
+ns.p.blizzard.main = false
+local okHide, reload = ns.HideBlizzard()
+ok(okHide and reload and parents[MicroMenuContainer] ~= ABarsHidden and parents[MainMenuBar] == ABarsHidden, "micro menu comes back, main bar needs a reload")
+ns.BlizzardMenu()
+
+local registered
+for _, a in ipairs(ACore.addons) do
+	if a.name == "ABars" then registered = a end
+end
+local opts = registered.options()
+ok(type(opts) == "table" and #opts > 15 and opts[1].title, "panel options " .. #opts)
+
 ACoreMinimapButton.__scripts.OnClick(ACoreMinimapButton, "LeftButton")
 ok(protected == 0, "no protected calls in combat at end")
 

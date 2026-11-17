@@ -201,7 +201,11 @@ for _, id in ipairs(Quest.GetAllIds()) do
 			local kc = {}
 			for _, o in ipairs(obj[5]) do
 				if type(o) == "table" and type(o[1]) == "table" then
-					for _, npc in ipairs(o[1]) do kc[#kc + 1] = npc end
+					local group = {}
+					for _, npc in ipairs(o[1]) do
+						if type(npc) == "number" then group[#group + 1] = npc end
+					end
+					if #group > 0 then kc[#kc + 1] = group end
 				end
 			end
 			if #kc > 0 then q.ok = kc end
@@ -241,8 +245,11 @@ for _, id in ipairs(Quest.GetAllIds()) do
 		local text = Quest.Get(id, "objectivesText")
 		if type(text) == "table" and #text > 0 then q.t = table.concat(text, " ") end
 
-		for _, l in ipairs({ q.s1 or {}, q.e1 or {}, q.oc or {}, q.ok or {} }) do
+		for _, l in ipairs({ q.s1 or {}, q.e1 or {}, q.oc or {} }) do
 			for _, n in ipairs(l) do needNpc[n] = true end
+		end
+		for _, group in ipairs(q.ok or {}) do
+			for _, n in ipairs(group) do needNpc[n] = true end
 		end
 		for _, l in ipairs({ q.s2 or {}, q.e2 or {}, q.oo or {} }) do
 			for _, n in ipairs(l) do needObj[n] = true end
@@ -336,8 +343,20 @@ f:write("}\n")
 f:close()
 
 local starts, ends, byZone = {}, {}, {}
-local function index(target, id, npcs, objs)
+local STARTER_SOURCES = 10
+local function index(target, id, npcs, objs, starters)
 	local maps = {}
+	for _, item in ipairs(starters or {}) do
+		local it = items[item]
+		if it and #it.npcs + #it.objs <= STARTER_SOURCES then
+			for _, n in ipairs(it.npcs) do
+				for m in pairs(npcMaps[n] or {}) do maps[m] = true end
+			end
+			for _, o in ipairs(it.objs) do
+				for m in pairs(objMaps[o] or {}) do maps[m] = true end
+			end
+		end
+	end
 	for _, n in ipairs(npcs or {}) do
 		for m in pairs(npcMaps[n] or {}) do maps[m] = true end
 	end
@@ -355,7 +374,7 @@ header(f, "quests")
 for _, id in ipairs(questIds) do
 	local q = quests[id]
 	f:write("[", id, "]=", quote(lit(q)), ",\n")
-	if not q.h then index(starts, id, q.s1, q.s2) end
+	if not q.h then index(starts, id, q.s1, q.s2, q.s3) end
 	index(ends, id, q.e1, q.e2)
 	if q.z then
 		byZone[q.z] = byZone[q.z] or {}

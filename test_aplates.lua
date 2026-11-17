@@ -18,6 +18,7 @@ local units = {
 	nameplate4 = { name = "Rabbit", level = 1, hp = 5, max = 5, reaction = 4, class = "rare", threat = 1 },
 }
 local target = "nameplate1"
+function UnitExists(u) return u == "target" or units[u] ~= nil end
 function UnitName(u) return units[u] and units[u].name end
 function UnitLevel(u) if u == "player" then return 20 end return units[u] and units[u].level end
 function UnitHealth(u) return units[u].hp end
@@ -152,7 +153,7 @@ ok(not p1.cast:IsShown(), "cast ends")
 casts.nameplate1 = { name = "Drain", s = 103000, e = 106000, channel = true, shield = true }
 event("UNIT_SPELLCAST_CHANNEL_START", "nameplate1")
 ok(p1.cast:IsShown() and math.abs(values[p1.cast] - 3) < 0.001, "channel drains")
-ok(p1.cast.__color[1] == 0.6, "shielded colour")
+ok(p1.cast.shield.__alpha == 1, "shielded overlay")
 casts.nameplate1 = { name = SECRET, s = SECRET, e = SECRET }
 event("UNIT_SPELLCAST_START", "nameplate1")
 ok(p1.cast:IsShown() and p1.cast.__timer and p1.cast.left.__text == "<secret>", "secret cast uses timer")
@@ -236,6 +237,115 @@ ok(ns.plates.nameplate1 and frames.nameplate1.UnitFrame.__alpha == 0, "on again"
 SlashCmdList["APLATES"]("reset")
 ok(ns.db.width == 120 and ns.db.debuffs, "reset")
 SlashCmdList["APLATES"]("")
+ok(ACorePanel and ACorePanel:IsShown() and #ACorePanel.list.data > 30, "options open in the ACore panel")
 SlashCmdList["ACORE"]("plates")
+local registered
+for _, a in ipairs(ACore.addons) do
+	if a.name == "APlates" then registered = a end
+end
+ok(registered and type(registered.options) == "function" and #registered.options() > 30, "options registered with ACore")
+
+local function texts()
+	local t = {}
+	for _, e in ipairs(ns.Entries()) do t[e.text] = e end
+	return t
+end
+ok(texts()["Show friendly plates"] and texts()["Stack plates instead of overlapping"], "cvar entries when the cvars exist")
+ok(not texts()["Personal resource bar"] and not texts()["Plate distance: 60"], "no entries for missing cvars")
+cvars.nameplateShowFriends, cvars.nameplateMotion = nil, nil
+cvars.nameplateShowFriendlyPlayers = "0"
+cvars.nameplateMaxDistance = "60"
+ok(not texts()["Stack plates instead of overlapping"], "stacking entry gone without the cvar")
+texts()["Show friendly plates"].func()
+ok(cvars.nameplateShowFriendlyPlayers == "1", "friendly plates fall back to the newer cvar")
+texts()["Plate distance: 60"].func()
+ok(cvars.nameplateMaxDistance == "20", "distance cycles")
+C_NamePlate.SetNamePlateEnemyClickThrough = nil
+ok(not texts()["Click through enemy plates"] and texts()["Click through friendly plates"], "click through only when supported")
+
+ns.db.tank = true
+units.nameplate1.threat = 3
+event("UNIT_THREAT_SITUATION_UPDATE", "nameplate1")
+ok(p1.health.__color[3] == 1, "tank colour while holding aggro")
+ns.db.tank = false
+ns.db.fade = true
+event("PLAYER_TARGET_CHANGED")
+ok(p1.__alpha == 0.55 and ns.plates.nameplate4.__alpha == 1, "other plates fade")
+ns.db.fade = false
+
+local logs = {}
+ABug = { Log = function(kind, msg) logs[#logs + 1] = kind .. " " .. msg end }
+local function shownAuras(f)
+	local n = 0
+	for _, a in ipairs(f.auras) do
+		if a:IsShown() then n = n + 1 end
+	end
+	return n
+end
+local mineOnly = { icon = 5, applications = 1, duration = 10, expirationTime = 105, auraInstanceID = 21, isFromPlayerOrPlayerPet = true }
+local theirs = { icon = 6, applications = 1, duration = 10, expirationTime = 105, auraInstanceID = 22, isFromPlayerOrPlayerPet = false }
+auras.nameplate1 = { HARMFUL = { theirs, mineOnly } }
+ns.db.ownOnly = true
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 1, "own debuffs found through the plain filter when the player filter gives nothing")
+ns.db.ownOnly = false
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 2, "all debuffs without duplicates " .. shownAuras(p1))
+
+auras.nameplate1 = { HARMFUL = { { icon = SECRET, applications = SECRET, duration = SECRET, expirationTime = SECRET, auraInstanceID = SECRET, isFromPlayerOrPlayerPet = SECRET, sourceUnit = SECRET } } }
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 1, "secret debuff still shown")
+
+local function logged(pat)
+	for _, l in ipairs(logs) do
+		if l:find(pat) then return l end
+	end
+end
+local byIndex = C_UnitAuras.GetAuraDataByIndex
+C_UnitAuras.GetAuraDataByIndex = function() error("index is broken") end
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 0 and logged("caught APlates: GetAuraDataByIndex HARMFUL: .*index is broken"), "failure logged")
+local count = #logs
+event("UNIT_AURA", "nameplate1")
+ok(#logs == count, "logged once")
+C_UnitAuras.GetUnitAuras = function(u, filter) if u == "nameplate1" and filter == "HARMFUL" then return { theirs, mineOnly } end end
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 2, "GetUnitAuras fallback")
+issecrettable = function(t) return t == theirs end
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 1, "secret aura tables skipped")
+issecrettable = nil
+C_UnitAuras.GetUnitAuras = nil
+C_UnitAuras.GetAuraSlots = function(u, filter) if u == "nameplate1" and filter == "HARMFUL" then return nil, 7, 8 end end
+C_UnitAuras.GetAuraDataBySlot = function(_, slot) return slot == 7 and theirs or mineOnly end
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 2, "slot fallback")
+C_UnitAuras.GetAuraSlots = nil
+AuraUtil = { ForEachAura = function(u, filter, _, fn)
+	if u == "nameplate1" and filter == "HARMFUL" then
+		fn(theirs)
+		fn(mineOnly)
+	end
+end }
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 2, "ForEachAura fallback")
+AuraUtil = nil
+UnitDebuff = function(u, i, filter)
+	if u ~= "nameplate1" or i > 2 then return nil end
+	if filter:find("PLAYER") then
+		if i == 1 then return "Rend", 9, 0, nil, 10, 105, "player" end
+		return nil
+	end
+	if i == 1 then return "Rend", 9, 0, nil, 10, 105, "player" end
+	return "Curse", 10, 0, "Curse", 10, 105, "party1"
+end
+event("UNIT_AURA", "nameplate1")
+ok(shownAuras(p1) == 2, "UnitDebuff fallback without duplicates " .. shownAuras(p1))
+local lines = ns.AuraReport("nameplate1")
+ok(#lines == 11 and lines[3]:find("GetAuraDataByIndex: error") and lines[6]:find("UnitAura: 2"), "aura report " .. tostring(lines[3]))
+SlashCmdList["APLATES"]("auras")
+UnitDebuff = nil
+C_UnitAuras.GetAuraDataByIndex = byIndex
+ABug = nil
 
 print_real(string.format("ok: %d checks (aplates)", M.checks()))

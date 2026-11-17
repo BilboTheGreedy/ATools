@@ -35,6 +35,9 @@ local cvars = {}
 function SetCVar(k, v) cvars[k] = v end
 local now = 100
 function GetTime() return now end
+local channelColors = {}
+function ChangeChatColor(kind, r, g, b) channelColors[kind] = { r, g, b } end
+function GetChannelList() return 1, "General", false, 2, "Trade", false, 4, "LookingForGroup", false end
 local sounds = 0
 function PlaySound() sounds = sounds + 1 end
 SOUNDKIT = { TELL_MESSAGE = 3081, RAID_WARNING = 8959 }
@@ -305,6 +308,63 @@ f1:AddMessage("|Hchannel:GUILD|h[Guild]|h x")
 ok(f1.messages[1] == "|Hchannel:GUILD|h[Guild]|h x", "formatting off")
 ns.db.editTop = false
 ns:Fire("OPTIONS")
+
+local d20 = filters.CHAT_MSG_SAY(f1, "CHAT_MSG_SAY", "no line id", "Bob-Realm")
+local d21 = filters.CHAT_MSG_SAY(frames[3], "CHAT_MSG_SAY", "no line id", "Bob-Realm")
+ok(d20 == false and d21 == false, "no spam verdict without a line id")
+
+ns.db.timestamp = false
+ns:Fire("OPTIONS")
+ok(CHAT_TIMESTAMP_FORMAT == nil and cvars.showTimestamps == "none", "timestamps off")
+ns.db.timestamp = "%H:%M "
+
+local tab = ChatFrame1Tab
+ns.db.minimal = true
+ns:Fire("OPTIONS")
+ok(CHAT_FRAME_TAB_NORMAL_NOMOUSE_ALPHA == 0 and tab.noMouseAlpha == 0 and tab.__alpha == 0, "tabs hidden until hovered")
+ns.db.minimal = false
+ns:Fire("OPTIONS")
+ok(CHAT_FRAME_TAB_NORMAL_NOMOUSE_ALPHA == 0.2 and tab.noMouseAlpha == 0.4, "tabs back")
+
+SlashCmdList["ACHAT"]("color trade ff8000")
+ok(channelColors.CHANNEL2 and channelColors.CHANNEL2[1] == 1 and math.abs(channelColors.CHANNEL2[2] - 128 / 255) < 1e-9 and not channelColors.CHANNEL1, "channel colour by name")
+channelColors = {}
+event("CHANNEL_UI_UPDATE")
+flush()
+ok(channelColors.CHANNEL2, "channel colour follows the channel list")
+local before = #M.printed
+SlashCmdList["ACHAT"]("color trade nonsense")
+ok(M.printed[#M.printed]:find("usage") and #M.printed == before + 1, "bad colour rejected")
+SlashCmdList["ACHAT"]("color trade off")
+ok(ns.db.channelColors.trade == nil and ns.ChannelColors() == 0, "channel colour removed")
+
+local key = ACore.CharKey()
+ns.db.keep = true
+ns.db.keepLines = 60
+AChatDB.saved = nil
+ns:Fire("OPTIONS")
+f1.messages = {}
+f1:AddMessage("kept line", 1, 0.5, 0)
+f1:AddMessage(SECRET)
+frames[2]:AddMessage("combat")
+ok(AChatDB.saved and #AChatDB.saved[key].ChatFrame1 == 1 and AChatDB.saved[key].ChatFrame2 == nil, "chat lines kept per character")
+ok(rawget(ns.db, "saved") == nil, "kept lines live outside the profile")
+ns.db.keepLines = 3
+for i = 1, 5 do f1:AddMessage("line " .. i) end
+ok(#AChatDB.saved[key].ChatFrame1 == 3 and AChatDB.saved[key].ChatFrame1[3][1] == "line 5", "kept lines capped")
+f1.messages = {}
+ok(ns.Replay() == 3 and f1.messages[1] == "line 3" and #AChatDB.saved[key].ChatFrame1 == 3, "kept lines replayed once")
+ns.db.keep = false
+ok(ns.Replay() == 0 and AChatDB.saved[key] == nil, "kept lines dropped when the option is off")
+
+local reg
+for _, a in ipairs(ACore.addons) do if a.name == "AChat" then reg = a end end
+local count = 0
+for _, e in ipairs(reg.options()) do
+	ok(e.text and (e.title or e.func), "panel entry " .. tostring(e.text))
+	if e.func then count = count + 1 end
+end
+ok(count > 35, "control panel options " .. count)
 
 SlashCmdList["ACHAT"]("")
 SlashCmdList["ACHAT"]("copy")

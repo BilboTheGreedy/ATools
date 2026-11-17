@@ -217,5 +217,57 @@ ALoot.WishToggle(18816)
 ALoot.Open(18816)
 ALoot.Open(1)
 
+local entries = ns.Options()
+ok(#entries > 8, "options entries")
+local registered
+for _, a in ipairs(ACore.addons) do
+	if a.name == "ALoot" then registered = a end
+end
+ok(registered and #registered.options() == #entries, "options registered with the control panel")
+for _, e in ipairs(entries) do
+	if e.func then e.func() e.func() end
+end
+ok(type(frame.Restore) == "function" and type(frame.StartDrag) == "function", "window is movable through ACore")
+
+ns.db.needed = false
+ns.UI.Go(mc, nil)
+local allRows = ns.GroupRows(mc, nil, "n", { class = "ALL", slot = "ALL" })
+local neededRows = ns.GroupRows(mc, nil, "n", { class = "ALL", slot = "ALL", needed = true })
+local function items(rows)
+	local n = 0
+	for _, r in ipairs(rows) do if r.kind == "item" then n = n + 1 end end
+	return n
+end
+ok(items(neededRows) > 0 and items(neededRows) < items(allRows), "needed filter " .. items(neededRows) .. " of " .. items(allRows))
+for _, r in ipairs(neededRows) do
+	if r.kind == "item" then
+		ok(not ns.Owned(r.id), "needed row is not owned")
+		local k = ns.ItemKind(r.id)
+		ok(not k or ns.Usable(k, ns.playerClass), "needed row is usable")
+	end
+end
+frame.neededButton.__scripts.OnClick(frame.neededButton, "LeftButton")
+ok(ns.db.needed and items(frame.lootList.data) == items(neededRows), "needed button")
+frame.neededButton.__scripts.OnClick(frame.neededButton, "LeftButton")
+
+local compared = 0
+function GameTooltip_ShowCompareItem() compared = compared + 1 end
+mods.shift = true
+for _, row in ipairs(frame.lootList.rows) do
+	if row:IsShown() and row.data and row.data.kind == "item" then
+		row.__scripts.OnEnter(row)
+		GameTooltip:Show()
+		event("MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+		row.__scripts.OnLeave(row)
+		break
+	end
+end
+mods.shift = false
+ok(compared == 2, "compare on shift " .. compared)
+
+local n0 = #printed
+event("CHAT_MSG_LOOT", "You receive loot: |cnIQ4:|Hitem:" .. wished .. "::::|h[Thing]|h|r.")
+ok(#printed == n0 + 1 and printed[#printed]:find("|cnIQ4:|Hitem:", 1, true), "loot alert keeps a modern link")
+
 print_real(string.format("ok: %d checks, %d groups, %d sections, %d rows, %d item requests", M.checks(), totalGroups, totalSections, totalRows, M.requests))
 for k, v in pairs(kinds) do print_real("  " .. k, v) end

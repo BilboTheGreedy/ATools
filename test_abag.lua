@@ -114,10 +114,28 @@ M.methods.GetAlpha = function(self) return self.__alpha or 1 end
 M.methods.SetID = function(self, id) self.__id = id end
 M.methods.GetID = function(self) return self.__id end
 
+local blizzard = 0
+for _, name in ipairs({ "ToggleAllBags", "OpenAllBags", "CloseAllBags", "ToggleBackpack", "OpenBackpack", "ToggleBag", "OpenBag" }) do
+	_G[name] = function() blizzard = blizzard + 1 end
+end
+local originalToggle = ToggleAllBags
+function hooksecurefunc(a, b, c)
+	local t, name, fn = _G, a, b
+	if type(a) == "table" then t, name, fn = a, b, c end
+	local orig = t[name]
+	t[name] = function(...)
+		orig(...)
+		fn(...)
+	end
+end
+ContainerFrame1 = CreateFrame("Frame")
+M.methods.SetParent = function(self, parent) self.__parent = parent end
+
 M.load("ACore", "ACore")
 local ns = M.load("ABag", "ABag")
 event("PLAYER_LOGIN")
 ok(ns.db and ns.knownReady, "ready")
+ok(templated == 30, "buttons prepared at login " .. templated)
 ok(ns.db.chars["Tester - Realm"] and #ns.db.chars["Tester - Realm"].bags == 9, "bags cached at login")
 
 local function shownButtons(kind)
@@ -135,7 +153,7 @@ ok(ABagFrame and ABagFrame:IsShown(), "window shown")
 ok(shownButtons("bags") == 30, "plain grid shows every slot " .. shownButtons("bags"))
 ok(templated == 30, "item buttons use the template " .. templated)
 local c = ns.Bags.Container()
-ok(c.buttons[0][5].item and c.buttons[0][5].item.id == 100, "button holds its item")
+ok(c.buttons[0][5].entry and c.buttons[0][5].entry.id == 100, "button holds its item")
 ok(c.buttons[0][5].__id == 5 and c.bagFrames[1].__id == 1, "slot and bag ids set")
 ok(c.free:GetText():find("15 / 24 free") and c.free:GetText():find("Soul 6"), "free text " .. c.free:GetText())
 
@@ -226,13 +244,40 @@ ok(c.money.text:GetText():find("12g"), "money shown")
 
 ns.Bags.Hide()
 ok(not ABagFrame:IsShown(), "hidden")
+ok(ToggleAllBags ~= originalToggle and blizzard == 0, "bag functions are hooked, not replaced")
+ok(ContainerFrame1.__parent and ContainerFrame1.__parent ~= UIParent and not ContainerFrame1.__parent:IsShown(), "default bag frames parked")
 ToggleAllBags()
-ok(ABagFrame:IsShown(), "ToggleAllBags opens")
-ok(CloseAllBags() == true and not ABagFrame:IsShown(), "CloseAllBags closes")
+flush()
+ok(ABagFrame:IsShown() and blizzard == 1, "ToggleAllBags opens")
+CloseAllBags()
+flush()
+ok(not ABagFrame:IsShown(), "CloseAllBags closes")
 OpenAllBags()
+flush()
 ok(ABagFrame:IsShown(), "OpenAllBags opens")
+CloseAllBags(UIParent)
+flush()
+ok(ABagFrame:IsShown(), "another window closing its bags leaves ours")
+OpenBackpack()
 ToggleBackpack()
-ok(not ABagFrame:IsShown(), "ToggleBackpack closes")
+flush()
+ok(not ABagFrame:IsShown(), "ToggleBackpack closes, last call wins")
+OpenAllBags(UIParent)
+flush()
+ok(ABagFrame:IsShown(), "another window opening bags opens ours")
+CloseAllBags(UIParent)
+flush()
+ok(not ABagFrame:IsShown(), "and closes them again")
+ns.db.autoOpen = false
+OpenAllBags(UIParent)
+flush()
+ok(not ABagFrame:IsShown(), "not when opening with other windows is off")
+CloseAllBags(UIParent)
+ns.db.autoOpen = true
+ContainerFrame1:Show()
+OpenBag(1)
+flush()
+ok(not ContainerFrame1:IsShown(), "parked default bags never stay open")
 
 merchant = true
 event("MERCHANT_SHOW")
@@ -301,7 +346,7 @@ bags[0].items[13] = { 300, 1 }
 event("BAG_UPDATE_DELAYED")
 flush()
 ok(templated == made, "no buttons created in combat")
-ok(c.buttons[0][13].item and c.buttons[0][13].item.id == 300, "existing buttons still update in combat")
+ok(c.buttons[0][13].entry and c.buttons[0][13].entry.id == 300, "existing buttons still update in combat")
 ok(not c.buttons[2], "new bag waits for combat to end")
 ns.Sort("bags")
 combat = false
@@ -340,6 +385,104 @@ flush()
 ok(ns.query == "potion", "slash search")
 ABag_ToggleBinding()
 ABag_ToggleBinding()
+
+local reg
+for _, a in ipairs(ACore.addons) do if a.name == "ABag" then reg = a end end
+ok(reg and type(reg.options) == "function" and #reg.options() > 10, "options for the control panel")
+
+C_Container.GetContainerItemQuestInfo = function(bag, slot)
+	local it = bags[bag] and bags[bag].items[slot]
+	if it and it[1] == 400 then return { isQuestItem = true, questID = 5, isActive = false } end
+	return { isQuestItem = false, isActive = false }
+end
+ns.Bags.Show()
+ns.RefreshAll()
+local bangs, bangId = 0, nil
+for _, list in pairs(c.buttons) do
+	for _, b in pairs(list) do
+		if b:IsShown() and b.bang:IsShown() then bangs, bangId = bangs + 1, b.entry and b.entry.id end
+	end
+end
+ok(bangs == 1 and bangId == 400, "quest starter marked " .. bangs)
+
+local SECRET = {}
+issecretvalue = function(v) return v == SECRET end
+C_Container.GetContainerItemCooldown = function() return SECRET, SECRET, 1 end
+local cs, cd, _, secret = ns.C.Cooldown(0, 1)
+ok(secret and cs == SECRET and cd == SECRET, "secret cooldown passed through")
+ns.RefreshAll()
+issecretvalue = nil
+C_Container.GetContainerItemCooldown = function() return 0, 0, 1 end
+
+bags[0].items[2] = { 500, 1 }
+bags[1].items[5] = { 501, 1 }
+AVendor = { IsProtected = function(id) return id == 500 end }
+local junk = ns.JunkList()
+ok(#junk == 1 and junk[1].id == 501, "protected junk is not sold " .. #junk)
+AVendor = nil
+ok(#ns.JunkList() == 2, "junk without the vendor addon")
+
+Enum.BankType = { Character = 0 }
+Enum.BagIndex = { Characterbanktab = -5, CharacterBankTab_1 = 6 }
+bags[6] = { size = 14, items = { [1] = { 100, 1 } } }
+bags[7] = { size = 10, items = {} }
+bags[-5] = { size = 6, items = { [2] = { 600, 1 } } }
+local bought, sortedBank
+C_Bank = {
+	FetchPurchasedBankTabIDs = function() return { 6, 7 } end,
+	FetchMaxNumBankTabs = function() return 6 end,
+	CanPurchaseBankTab = function() return true end,
+	PurchaseBankTab = function(t) bought = t end,
+	FetchNextPurchasableBankTabData = function() return { tabCost = 100 } end,
+	CloseBankFrame = function() end,
+}
+C_Container.SortBank = function(t) sortedBank = t end
+local tabs = ns.BagList("bank")
+ok(ns.TabbedBank() and #tabs == 2 and tabs[1] == 6 and tabs[2] == 7, "bank tabs listed")
+ns.db.bagbar = true
+event("BANKFRAME_OPENED")
+flush()
+ok(shownButtons("bank") == 24, "tabbed bank slots " .. shownButtons("bank"))
+local shownBar = 0
+for _, b in ipairs(bank.bagButtons) do if b:IsShown() then shownBar = shownBar + 1 end end
+ok(shownBar == 5 and bank.bagButtons[1].spec.holder == -5 and bank.bagButtons[1].spec.index == 2, "bank bag slots " .. shownBar)
+cursor = nil
+bank.bagButtons[1].__scripts.OnEnter(bank.bagButtons[1])
+bank.bagButtons[1].__scripts.OnClick(bank.bagButtons[1], "LeftButton")
+ok(cursor and cursor.bag == bags[-5] and cursor.slot == 2, "bank bag picked up")
+cursor = nil
+bank.sortButton.__scripts.OnClick(bank.sortButton, "LeftButton")
+ok(sortedBank == 0, "tabbed bank sort")
+ok(bank.buyButton:IsShown(), "bank tab offered")
+bank.buyButton.__scripts.OnClick(bank.buyButton, "LeftButton")
+StaticPopupDialogs["ACORE_CONFIRM"].OnAccept()
+ok(bought == 0, "bank tab bought")
+ok(#ns.db.chars["Tester - Realm"].bank == 1, "tabbed bank cached")
+ns.db.replaceBank = false
+event("BANKFRAME_CLOSED")
+flush()
+ns.Bags.Hide()
+event("BANKFRAME_OPENED")
+flush()
+ok(not ABagBankFrame:IsShown() and ABagFrame:IsShown(), "default bank kept when asked")
+event("BANKFRAME_CLOSED")
+flush()
+ns.db.replaceBank = true
+ns.db.bagbar = false
+ok(ns.bankStashed, "bank window replaced")
+ns.bankStashed = nil
+BankFrame = CreateFrame("Frame")
+BankFrame:Hide()
+C_Bank.FetchPurchasedBankTabIDs = function() return {} end
+ns.StashBank()
+ok(not ns.bankStashed and BankFrame.__parent == nil, "default bank kept until the first tab exists")
+event("BANKFRAME_OPENED")
+flush()
+ok(not ABagBankFrame:IsShown(), "default bank handles the first visit")
+C_Bank.FetchPurchasedBankTabIDs = function() return { 6 } end
+event("BANKFRAME_CLOSED")
+flush()
+ok(ns.bankStashed and BankFrame.__parent ~= nil and not BankFrame.__parent:IsShown(), "bank window parked afterwards")
 ok(#ACore.addons >= 1, "registered with the launcher")
 
 print_real(string.format("ok: %d checks, %d item buttons", M.checks(), templated))

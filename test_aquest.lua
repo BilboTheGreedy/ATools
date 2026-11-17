@@ -214,4 +214,120 @@ SlashCmdList["AQUEST"]("reset")
 AQuest_ToggleBinding()
 ACoreMinimapButton.__scripts.OnClick(ACoreMinimapButton, "LeftButton")
 
+for _, key in ipairs({ "available", "objectives", "turnins", "minimap", "tracker" }) do ns.db[key] = true end
+ns.db.trivial = true
+ns:Fire("OPTIONS")
+
+local fired = 0
+ns:Listen("LOG_CHANGED", function() fired = fired + 1 end)
+event("PLAYER_LEVEL_UP", 9)
+event("QUEST_LOG_UPDATE")
+flush()
+ok(fired == 1, "level up scan survives a later plain rescan " .. fired)
+
+C_Item.GetItemCount = function() return 0 end
+ns:Fire("OPTIONS")
+local collector
+for _, p in ipairs(ns.Pins.Build(1429)) do
+	for _, l in ipairs(p.lines) do
+		if l.quest == 123 and l.kind == "available" then collector = l.text end
+	end
+end
+ok(collector and collector:find("Drops: "), "item started quest pin")
+ok(ns.StarterPlace(ns.Quest(123)):find("item from"), "item starter place")
+
+local kc
+for id in pairs(ns.raw.quests) do
+	local q = ns.Quest(id)
+	if q.ok then kc = q break end
+end
+ok(kc and type(kc.ok[1]) == "table" and type(kc.ok[1][1]) == "number", "kill credit groups")
+
+local entry = { objectives = {
+	{ text = "Kobolde get\195\182tet: 3/10", type = "monster", done = false },
+	{ text = "Zweiter: 1/1", type = "monster", done = true },
+	{ text = "Kiste: 0/1", type = "item", done = false },
+} }
+ok(ns.ObjectiveFor(entry, "Kobold Vermin", "monster", 2) == entry.objectives[2], "objective by type and order")
+ok(ns.ObjectiveFor(entry, "Kiste", "monster", 1) == entry.objectives[3], "objective by name")
+ok(ns.ObjectiveFor(entry, "Nothing", "object", 1) == nil, "objective missing")
+
+ns.playerLevel = 30
+C_SkillInfo = {
+	GetNumSkillLines = function() return 2 end,
+	GetSkillLineInfo = function(i) return i == 1 and { isHeader = true, name = "Professions" } or { skillID = 185, rank = 20, name = "Cooking" } end,
+}
+event("SKILL_LINES_CHANGED")
+ok(ns.Unavailable(ns.Quest(90)) == "Needs skill 50", "skill rank requirement")
+ok(ns.Unavailable(ns.Quest(769)) ~= nil, "profession requirement")
+C_SkillInfo = nil
+event("SKILL_LINES_CHANGED")
+flush()
+ns.playerLevel = 9
+
+ns.Tracker.SetTracked(62, true)
+ok(ns.Tracker.Tracked(62), "tracked before the game drops it")
+watch[62] = nil
+event("QUEST_WATCH_LIST_CHANGED", 62, false)
+flush()
+ok(not ns.Tracker.Tracked(62), "follows removal from the watch list")
+watch[62] = 0
+event("QUEST_WATCH_LIST_CHANGED", 62, true)
+flush()
+ok(ns.Tracker.Tracked(62), "follows additions to the watch list")
+
+local n, w, cont = ns.Pins.World(1429, 0.25, 0.75)
+ok(math.abs(n - 250) < 0.001 and math.abs(w - 750) < 0.001, "world position from map rect")
+
+local ways = {}
+AWay = {
+	Add = function(map, x, y, title) ways[#ways + 1] = { map = map, x = x, y = y, title = title } return #ways end,
+	List = function() return ways end,
+	Remove = function(i) table.remove(ways, i) return true end,
+}
+C_Map.GetPlayerMapPosition = function() return { x = 0.4, y = 0.6 } end
+local map, x, y = ns.Pins.Nearest(62)
+ok(map == 1429 and x and y, "nearest objective")
+local best
+for _, p in ipairs(ns.Pins.QuestPoints(62, 1429)) do
+	local d = (p.x - 0.4) ^ 2 + (p.y - 0.6) ^ 2
+	if not best or d < best then best = d end
+end
+ok(math.abs(((x - 0.4) ^ 2 + (y - 0.6) ^ 2) - best) < 1e-9, "nearest is the closest point")
+ok(ns.NearestWaypoint(62) and #ways == 1 and ways[1].title:find("Fargodeep"), "waypoint to nearest")
+C_Map.GetPlayerMapPosition = function() return { x = 0.9, y = 0.1 } end
+ns.NearestWaypoint(62)
+ns.NearestWaypoint(7)
+ok(#ways == 1, "waypoints do not pile up " .. #ways)
+ok(ns.Pins.Nearest(2) ~= nil, "nearest for a quest outside the log")
+
+local passed, combat = 0, true
+function InCombatLockdown() return combat end
+M.methods.SetPassThroughButtons = function() passed = passed + 1 end
+ns.db.pinSize = 1
+ns.Pins.RefreshWorld(true)
+local worldPins = 0
+for _, f in ipairs(M.frames) do
+	if f.pin and f.__shown and f.map then worldPins = worldPins + 1 end
+end
+M.mods.shift = true
+for _, f in ipairs(M.frames) do
+	if f.pin and f.__shown and f.map then f.__scripts.OnClick(f) break end
+end
+M.mods.shift = false
+ok(#ways == 1 and ways[1].map == 1429, "shift-click pin sets a waypoint")
+local before = passed
+local poolBefore = #M.frames
+function UnitPosition() return 500, 500, 0, 0 end
+ns.db.minimap = true
+ns:Fire("OPTIONS")
+ns.Pins.RefreshMini()
+ok(#M.frames > poolBefore, "minimap pins created in combat " .. (#M.frames - poolBefore))
+ok(passed == before, "no pass through call in combat")
+combat = false
+event("PLAYER_REGEN_ENABLED")
+ok(passed >= before + (#M.frames - poolBefore), "pass through after combat")
+M.tooltipCalls[#M.tooltipCalls - 1](GameTooltip, { id = 1931 })
+AWay = nil
+
 print_real(string.format("ok: %d checks, %d quests, %d pins over %d maps", M.checks(), count, total, maps))

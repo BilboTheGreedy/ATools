@@ -7,6 +7,17 @@ end
 function GetTime() return M.now or 0 end
 function GetCVar() return "0" end
 function IsIndoors() return false end
+local hooks = {}
+function hooksecurefunc(name, fn) hooks[name] = fn end
+function SetItemRef() end
+local filters = {}
+function ChatFrame_AddMessageEventFilter(e, fn) filters[e] = fn end
+local sent = {}
+function SendChatMessage(text, channel) sent[#sent + 1] = channel .. ":" .. text end
+local grouped, dead = false, false
+function IsInGroup() return grouped end
+function IsInRaid() return false end
+function UnitIsDeadOrGhost() return dead end
 
 local player = { map = 1429, north = 0, west = 0, facing = 0, instance = 0 }
 local SIZE = 1000
@@ -228,6 +239,125 @@ SlashCmdList["AWAYOPT"]("clear")
 ok(AWay.Get() == nil, "away clear")
 ACoreMinimapButton.__scripts.OnClick(ACoreMinimapButton, "LeftButton")
 
+local xml = io.open("AWay/Bindings.xml"):read("*a")
+ok(select(2, xml:gsub('header="AWAY"', "")) == 1, "binding header declared once")
+for name in xml:gmatch('name="([%w_]+)"') do
+	ok(type(_G["BINDING_NAME_" .. name]) == "string", "binding name " .. name)
+end
+ok(SLASH_AWAYOPT1 ~= "/away", "options slash does not shadow the afk command")
+
+AWay.Clear()
+ns.db.single, ns.db.corpse, ns.db.links, ns.db.arrive = false, true, true, true
+pm, px, py, pt = ns.Way.Parse("#1436 45 61 Mine entrance")
+ok(pm == 1436 and px == 0.45 and py == 0.61 and pt == "Mine entrance", "tomtom map id format")
+pm, px = ns.Way.Parse("#9999 45 61")
+ok(pm == nil and px:find("unknown map"), "unknown map id")
+pm = ns.Way.Parse("Westfall:Azeroth 30 40")
+ok(pm == 1436, "zone with a continent suffix")
+ok(ns.Way.Parse("closest") == "closest" and ns.Way.Parse("options") == "options" and select(2, ns.Way.Parse("share guild")) == "guild", "more commands")
+ok(select(2, ns.Way.Parse("here Camp fire")) == "Camp fire", "here with a name")
+
+names[1453] = "Stormwind City"
+names[2000] = "Westfall"
+names[947] = "Azeroth"
+local asked
+C_Map.GetMapChildrenInfo = function(top, kind, all)
+	asked = asked or top
+	return {
+		{ mapID = 2000, name = "Westfall", mapType = 5 },
+		{ mapID = 1436, name = "Westfall", mapType = 3 },
+		{ mapID = 1429, name = "Elwynn Forest", mapType = 3 },
+		{ mapID = 1453, name = "Stormwind City", mapType = 3 },
+		{ mapID = 1415, name = "Eastern Kingdoms", mapType = 2 },
+	}
+end
+local realInfo = C_Map.GetMapInfo
+C_Map.GetMapInfo = function(map)
+	local info = realInfo(map)
+	if info then info.parentMapID = map == 1429 and 1415 or map == 1415 and 947 or 0 end
+	return info
+end
+ok(ns.BuildZones() > 0 and asked == 947, "zone index built from the map tree " .. tostring(asked))
+ok(ns.FindZone("westfall") == 1436, "zone wins over a micro map of the same name")
+ok(ns.FindZone("storm") == 1453 and ns.FindZone("Stormwind City") == 1453, "city found outside the old id range")
+ok(ns.FindZone("e") == 1429, "prefix match in a zone before a continent")
+ok(ns.FindZone("nothing") == nil, "unknown zone")
+C_Map.GetMapChildrenInfo = function() return {} end
+ok(ns.BuildZones() == 0 and ns.FindZone("durotar") == 1411, "range scan when the tree is empty")
+
+AWay.Add(1429, 0.5, 0.1, "Far")
+AWay.Add(1429, 0.5, 0.45, "Near")
+AWay.Add(1429, 0.9, 0.9)
+local cl = AWay.Closest()
+ok(cl and select(4, AWay.Get()) == "Near", "closest waypoint " .. tostring(cl) .. " " .. tostring(select(4, AWay.Get())) .. " " .. AWay.Count())
+ok(AWay.Text() == "/way #1429 50.0 45.0 Near" and AWay.Text(3) == "/way #1429 90.0 90.0", "share text")
+ok(AWay.Share() == false and #sent == 0, "no share without a group")
+ok(ns.Way.ShareCommand() == false and printed[#printed]:find("not in a group"), "share message")
+grouped = true
+ok(AWay.Share() == true and sent[1] == "PARTY:/way #1429 50.0 45.0 Near", "share to the party " .. tostring(sent[1]))
+ok(AWay.Share(1, "guild") == true and sent[2] == "GUILD:/way #1429 50.0 10.0 Far", "share to the guild")
+ok(AWay.Share(1, "bogus") == false and AWay.Share(9) == false, "bad share")
+SlashCmdList["AWAY"]("share")
+ok(#sent == 3, "slash share")
+grouped = false
+
+local line = ns.Way.Linkify("go to /way #1436 30.5 40 Farm house")
+ok(line == "go to |cff66d9ff|Haddon:away:1436:30.5:40:Farm house|h[Westfall 30.5, 40 Farm house]|h|r", "chat link " .. tostring(line))
+ok(ns.Way.Linkify("nothing here") == nil and ns.Way.Linkify("|Hitem:1|h /way #1 2 3") == nil and ns.Way.Linkify("/way #1 200 3") == nil, "other text left alone")
+local keep, out, who = filters.CHAT_MSG_PARTY(nil, "CHAT_MSG_PARTY", "/way #1429 10 20", "Bob")
+ok(keep == false and out:find("Haddon:away:1429:10:20:") and who == "Bob", "filter rewrites the message")
+ok(filters.CHAT_MSG_PARTY(nil, "CHAT_MSG_PARTY", "hello", "Bob") == false, "filter passes other text")
+ns.db.links = false
+ok(select(2, filters.CHAT_MSG_PARTY(nil, "CHAT_MSG_PARTY", "/way #1429 10 20", "Bob")) == nil, "links can be turned off")
+ns.db.links = true
+AWay.Clear()
+hooks.SetItemRef("addon:away:1436:30.5:40:Farm house")
+wm, wx, wy, wt = AWay.Get()
+ok(wm == 1436 and math.abs(wx - 0.305) < 1e-9 and wy == 0.4 and wt == "Farm house", "clicking the link adds it")
+hooks.SetItemRef("item:123")
+hooks.SetItemRef("addon:away:1436:30.5:40:")
+ok(AWay.Count() == 1 and select(4, AWay.Get()) == "Farm house", "a bare link keeps the given name")
+
+C_Map.GetPlayerMapPosition = function() return CreateVector2D(0.25, 0.75) end
+SlashCmdList["AWAY"]("here Camp")
+ok(AWay.Count() == 2 and select(4, AWay.Get()) == "Camp" and select(2, AWay.Get()) == 0.25, "way here")
+dead = true
+event("PLAYER_DEAD")
+ok(AWay.Count() == 2 and ns.chardb.list[2][5] == true, "corpse waypoint replaces the same spot")
+C_Map.GetPlayerMapPosition = function() return CreateVector2D(0.6, 0.2) end
+event("PLAYER_DEAD")
+ok(AWay.Count() == 2 and select(4, AWay.Get()) == "Corpse", "corpse waypoint")
+C_Map.GetPlayerMapPosition = function() return CreateVector2D(0.5, 0.5) end
+event("PLAYER_DEAD")
+tickAll(1)
+ok(AWay.Count() == 2 and select(4, AWay.Get()) == "Corpse", "no arrival while lying on the corpse")
+player.north = 100
+tickAll(1)
+player.north = 2
+tickAll(1)
+ok(AWay.Count() == 1, "arrival at the corpse after running back")
+player.north = 0
+event("PLAYER_DEAD")
+event("PLAYER_ALIVE")
+ok(AWay.Count() == 2, "still there as a ghost")
+dead = false
+event("PLAYER_UNGHOST")
+ok(AWay.Count() == 1 and select(4, AWay.Get()) == "Farm house", "corpse waypoint removed when alive")
+ns.db.corpse = false
+event("PLAYER_DEAD")
+ok(AWay.Count() == 1, "corpse option off")
+ns.db.corpse = true
+C_Map.GetPlayerMapPosition = function() return nil end
+ok(ns.Way.Died() == false, "no corpse waypoint without a position")
+SlashCmdList["AWAY"]("here")
+ok(printed[#printed]:find("no position"), "way here without a position")
+SlashCmdList["AWAY"]("closest")
+SlashCmdList["AWAY"]("options")
+SlashCmdList["AWAY"]("unlock")
+ok(ns.db.arrowDb.locked == false, "way unlock")
+SlashCmdList["AWAY"]("lock")
+AWay.Clear()
+
 local secret = {}
 issecretvalue = function(v) return v == secret end
 ok(ns.Num(secret) == nil and ns.Num(3) == 3, "secret numbers rejected")
@@ -240,6 +370,7 @@ ok(not AWayArrow:IsShown(), "no arrow with a secret facing")
 GetPlayerFacing = realFacing
 UnitPosition = function() return secret, secret, 0, 0 end
 ok(ns.Way.Vector() == nil, "secret position gives no vector")
+ok(ns.Way.Linkify(secret) == nil and ns.Way.OnLink(secret) == false and AWay.Add(secret, 1, 1) == false, "secret text ignored")
 tickAll(1)
 flush()
 

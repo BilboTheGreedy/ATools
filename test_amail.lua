@@ -137,9 +137,12 @@ ok(count == 6 and gold == 1750 and items == 4 and soonest == 1.5, "summary " .. 
 ok(c.summary:GetText():find("6 mails") and c.summary:GetText():find("expires"), "summary text")
 InboxFrame_Update()
 
+function GetInboxInvoiceInfo(i) return mails[i] and mails[i].money > 0 and "seller" or nil end
 c.gold.__scripts.OnClick(c.gold, "LeftButton")
 flush()
+GetInboxInvoiceInfo = nil
 ok(taken == 1700 and looted == 0, "gold only " .. taken)
+ok(printed[#printed]:find("from auctions"), "auction income in the summary " .. printed[#printed])
 ok(#mails == 5, "empty gold mail removed " .. #mails)
 ok(printed[#printed]:find("collected"), "gold summary")
 
@@ -531,6 +534,7 @@ moneySet, codSet = nil, nil
 frame.send.__scripts.OnClick(frame.send, "LeftButton")
 ok(#sent == 1 and sent[1].to == "Altbank" and sent[1].n == 2 and sent[1].money == 20507 and sent[1].body == "hello", "send with attachments and money")
 ok(sent[1].subject == "Sent thing 1", "subject defaults to the first item")
+ok(sent[1].cod == 0, "money send clears cod")
 event("MAIL_SEND_SUCCESS")
 flush()
 ok(frame.name.box:GetText() == "" and frame.bodyBox:GetText() == "" and frame.gold.box:GetText() == "", "fields clear after sending")
@@ -546,7 +550,7 @@ cursor = 5
 frame.slots[1].__scripts.OnClick(frame.slots[1], "LeftButton")
 moneySet, codSet = nil, nil
 frame.send.__scripts.OnClick(frame.send, "LeftButton")
-ok(#sent == 2 and sent[2].cod == 10000 and sent[2].money == nil, "cod send")
+ok(#sent == 2 and sent[2].cod == 10000 and sent[2].money == 0, "cod send clears money")
 event("MAIL_SEND_SUCCESS")
 flush()
 function GetMoney() return 10 end
@@ -583,6 +587,20 @@ M.mods.alt = false
 ok(#sent == 1 and frame.sendPane:IsShown(), "quick send switches the window to send")
 event("MAIL_SEND_SUCCESS")
 flush()
+local realGet = GetSendMailItem
+function GetSendMailItem(i) if i == 1 then return "Draft thing", 1, 134400, 1, 1 end end
+fill()
+M.mods.alt = true
+HandleModifiedItemClick("link", { GetBagAndSlot = function() return 0, 15 end })
+M.mods.alt = false
+ok(#sent == 1 and printed[#printed]:find("mail you are writing"), "quick send only attaches to a started mail")
+GetSendMailItem = realGet
+local cleared = 0
+SendMailNameEditBox.HasFocus = function() return true end
+SendMailNameEditBox.ClearFocus = function() cleared = cleared + 1 end
+frame.tabSend.__scripts.OnClick(frame.tabSend, "LeftButton")
+ok(cleared == 1, "hidden default box does not keep the keyboard")
+SendMailNameEditBox.HasFocus = nil
 
 frame.options.__scripts.OnClick(frame.options, "LeftButton")
 ok(clickMenu("Use the default mailbox window"), "default window option")
@@ -592,9 +610,15 @@ for _, f in ipairs(M.frames) do
 	if f == frame and f.__scripts.OnUpdate then f.__scripts.OnUpdate(f, 1) end
 end
 
+local restored = 0
+local realPoint = MailFrame.SetPoint
+MailFrame.SetPoint = function(_, point) if point == "TOPLEFT" then restored = restored + 1 end end
 frame.close.__scripts.OnClick(frame.close, "LeftButton")
 ok(closed == 1 and not frame:IsShown(), "closing the window closes the mailbox")
+ok(restored == 0, "default window stays hidden until the mailbox closes")
 event("MAIL_CLOSED")
+ok(restored == 1, "default window restored after closing")
+MailFrame.SetPoint = realPoint
 MailFrame.__shown = true
 event("MAIL_SHOW")
 flush()

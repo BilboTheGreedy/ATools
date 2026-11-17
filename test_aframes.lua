@@ -50,7 +50,8 @@ function UnitIsDeadOrGhost(unit) if secretMode then return S end return u(unit) 
 function UnitIsGhost(unit) if secretMode then return S end return u(unit) and u(unit).ghost or false end
 function UnitIsGroupLeader(unit) if secretMode then return S end return u(unit) and u(unit).leader or false end
 function UnitGroupRolesAssigned(unit) return val(unit, "role", "NONE") end
-function UnitIsUnit(a, b) if secretMode then return S end return a == "party1" and b == "target" end
+function UnitIsUnit(a, b) if secretMode then return S end return (a == "party1" and b == "target") or a == b end
+function UnitThreatSituation(unit) return val(unit, "threat", nil) end
 function UnitCanAttack(_, unit) if secretMode then return S end return u(unit) and u(unit).hostile or false end
 function UnitReaction(unit) return val(unit, "reaction", 5) end
 function UnitInRange(unit)
@@ -68,7 +69,7 @@ function UnitCastingInfo(unit)
 	local c = u(unit) and u(unit).cast
 	if not c then return nil end
 	if secretMode then return S, S, S, S, S, S, S, S end
-	return c[1], c[1], 136, c[2], c[3], false, 1, false
+	return c[1], c[1], 136, c[2], c[3], false, 1, c[4] or false
 end
 function UnitChannelInfo(unit)
 	local c = u(unit) and u(unit).channel
@@ -156,6 +157,11 @@ for _, name in ipairs(BLIZZ) do
 	_G[name] = f
 end
 M.methods.GetName = function(self) return self.__name end
+M.methods.SetAttribute = function(self, k, v)
+	self.__attr = self.__attr or {}
+	self.__attr[k] = v
+end
+M.methods.SetAlpha = function(self, a) self.__alpha = a end
 local cf = CreateFrame
 CreateFrame = function(kind, name, ...)
 	local f = cf(kind, name, ...)
@@ -166,6 +172,7 @@ end
 AFramesDB = {
 	player = { enabled = false }, target = { enabled = false },
 	party = { enabled = true, pos = { "CENTER", "CENTER", 1, 2 } }, healthText = "value",
+	units = { player = { default = { "CENTER", "CENTER", 0, 0 } } },
 }
 
 M.load("ACore", "ACore")
@@ -175,6 +182,8 @@ local U = ns.db.units
 ok(AFramesDB.profiles and AFramesDB.profiles.Default == ns.db and ns.db.healthText == "value", "old settings moved into the profile")
 ok(U.player.on and U.target.on and U.tot.on and U.pet.on and U.focus.on and U.party.on and U.raid.on, "new defaults apply despite old saved off values")
 ok(#ns.buttons == 5 + 5 + 4 + 40 + 5, "unit buttons " .. #ns.buttons)
+ok(U.player.default == ns.POS.player and U.player.default[3] == -270, "default position comes from the code, not the saved copy")
+ok(AFramesPlayerUnit.__attr.unit == "player" and AFramesPlayerUnit.__attr["*type1"] == "target", "secure attributes")
 ok(AFramesPlayerUnit and AFramesTargetUnit and AFramesTargetTargetUnit and AFramesPetUnit and AFramesFocusUnit and AFramesParty4 and AFramesPartyPet1 and AFramesRaid40 and AFramesRaidParty0, "named frames")
 settle(ns)
 ok(AFramesPlayerUnit:IsShown() and AFramesTargetUnit:IsShown() and AFramesTargetTargetUnit:IsShown() and AFramesPetUnit:IsShown() and AFramesFocusUnit:IsShown(), "single frames shown")
@@ -236,6 +245,7 @@ ok(AFramesTargetUnit.auraOffset == 18, "auras move below the cast bar")
 clock = 3.5
 AFramesTargetUnit.cast.__scripts.OnUpdate(AFramesTargetUnit.cast, 0.1)
 ok(not AFramesTargetUnit.cast:IsShown(), "cast bar ends")
+ok(AFramesTargetUnit.auraOffset == 0, "auras move back when the cast runs out")
 clock = 1.5
 ok(not AFramesTargetUnit.combo:IsShown(), "no combo points for a warrior")
 ns.playerClass = "ROGUE"
@@ -258,9 +268,156 @@ ok(AFramesPlayerUnit.portrait:IsShown() and AFramesTargetUnit.portrait:IsShown()
 ACastDB = {}
 event("UNIT_SPELLCAST_START", "target")
 ok(not AFramesTargetUnit.cast:IsShown(), "no cast bar when ACast is loaded")
+ACastDB = { profiles = { Default = { target = { show = false } } } }
+event("UNIT_SPELLCAST_START", "target")
+ok(AFramesTargetUnit.cast:IsShown(), "cast bar kept when ACast has its target bar off")
 ACastDB = nil
 event("UNIT_SPELLCAST_START", "target")
 ok(AFramesTargetUnit.cast:IsShown(), "cast bar back")
+units.target.cast = { "Charge", 1000, 3000, true }
+event("UNIT_SPELLCAST_START", "target")
+ok(AFramesTargetUnit.cast.shield.__alpha == 1, "shielded cast overlay")
+units.target.cast = { "Charge", 1000, 3000 }
+event("UNIT_SPELLCAST_START", "target")
+ok(AFramesTargetUnit.cast.shield.__alpha == 0, "overlay off for a normal cast")
+
+units.party1.threat = 3
+event("UNIT_THREAT_SITUATION_UPDATE", "party1")
+ok(AFramesParty1.threat, "aggro border")
+ns.db.threat = false
+event("UNIT_THREAT_SITUATION_UPDATE", "party1")
+ok(not AFramesParty1.threat, "aggro border off")
+ns.db.threat = true
+units.party1.threat = nil
+ns.db.powerText = true
+event("UNIT_POWER_UPDATE", "player")
+ok(AFramesPlayerUnit.ptext.__text == "30" and AFramesTargetUnit.ptext.__text == "", "power text " .. tostring(AFramesPlayerUnit.ptext.__text))
+ns.db.powerText = false
+event("UNIT_POWER_UPDATE", "player")
+ok(AFramesPlayerUnit.ptext.__text == "", "power text off")
+GetLootMethod = function() return "master", 0, nil end
+event("PARTY_LOOT_METHOD_CHANGED")
+ok(AFramesPlayerUnit.loot:IsShown() and not AFramesParty1.loot:IsShown(), "master looter icon")
+GetLootMethod = function() return "group" end
+event("PARTY_LOOT_METHOD_CHANGED")
+ok(not AFramesPlayerUnit.loot:IsShown(), "no icon without master loot")
+AFramesParty1.__scripts.OnEnter(AFramesParty1)
+ok(AFramesParty1.hover:IsShown(), "mouseover highlight")
+AFramesParty1.__scripts.OnLeave(AFramesParty1)
+ok(not AFramesParty1.hover:IsShown(), "highlight off")
+ok(not AFramesPlayerUnit.mana:IsShown(), "no extra mana bar for a rogue")
+ns.playerClass = "DRUID"
+event("UNIT_DISPLAYPOWER", "player")
+ok(AFramesPlayerUnit.mana:IsShown(), "druid mana bar while shifted")
+units.player.ptype = "MANA"
+event("UNIT_DISPLAYPOWER", "player")
+ok(not AFramesPlayerUnit.mana:IsShown(), "mana bar hidden in caster form")
+units.player.ptype = "RAGE"
+
+ns.SetClick(1, " Renew ")
+ok(ns.db.clicks.DRUID["shift-1"] == "Renew", "click cast saved per class")
+ok(AFramesParty1.__attr["shift-type1"] == "spell" and AFramesParty1.__attr["shift-spell1"] == "Renew" and AFramesRaid9.__attr["shift-spell1"] == "Renew", "click cast attributes")
+ns.SetClick(7, "Dispel Magic")
+ok(AFramesParty1.__attr["type3"] == "spell" and AFramesParty1.__attr["spell3"] == "Dispel Magic", "middle click")
+combat = true
+ns.SetClick(1, "")
+ok(AFramesParty1.__attr["shift-type1"] == "spell", "attributes untouched in combat")
+combat = false
+event("PLAYER_REGEN_ENABLED")
+ok(AFramesParty1.__attr["shift-type1"] == nil and AFramesParty1.__attr["shift-spell1"] == nil, "click cast cleared after combat")
+ns.SetClick(7, "")
+ns.playerClass = "ROGUE"
+ok(next(ns.Clicks()) == nil, "another class starts empty")
+
+local function shownIcons(list)
+	local n = 0
+	for _, icon in ipairs(list) do
+		if icon:IsShown() then n = n + 1 end
+	end
+	return n
+end
+local logs = {}
+ABug = { Log = function(kind, msg) logs[#logs + 1] = kind .. " " .. msg end }
+local function logged(pat)
+	for _, l in ipairs(logs) do
+		if l:find(pat) then return l end
+	end
+end
+local realIndex = C_UnitAuras.GetAuraDataByIndex
+local mine = { icon = 1, applications = 1, auraInstanceID = 91, isFromPlayerOrPlayerPet = true, duration = 30, expirationTime = 40 }
+local theirs = { icon = 2, applications = 1, auraInstanceID = 92, isFromPlayerOrPlayerPet = false, duration = 30, expirationTime = 40 }
+C_UnitAuras.GetAuraDataByIndex = function(unit, i, filter)
+	if filter:find("PLAYER") then return nil end
+	if filter == "HARMFUL" then return ({ theirs, mine })[i] end
+end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 2, "target debuffs shown")
+event("UNIT_AURA", "focus")
+ok(shownIcons(AFramesFocusUnit.debuffs) == 1, "own debuffs found when the player filter returns nothing")
+C_UnitAuras.GetAuraDataByIndex = function(unit, i, filter)
+	if filter == "HARMFUL" and i == 1 then return { icon = S, applications = S, auraInstanceID = S, isFromPlayerOrPlayerPet = S, sourceUnit = S, duration = S, expirationTime = S, dispelName = S } end
+end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 1, "secret debuff shown")
+C_UnitAuras.GetAuraDataByIndex = function() error("index is broken") end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 0 and logged("caught AFrames: GetAuraDataByIndex HARMFUL: .*index is broken"), "failure logged")
+ok(logged("own auras read through GetAuraDataByIndex: HARMFUL|PLAYER"), "fallback path logged")
+local logCount = #logs
+event("UNIT_AURA", "target")
+ok(#logs == logCount, "each failure logged once")
+C_UnitAuras.GetUnitAuras = function(unit, filter) if unit == "target" and filter == "HARMFUL" then return { theirs, mine } end end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 2, "GetUnitAuras fallback")
+issecrettable = function(t) return t == theirs end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 1, "secret aura tables skipped")
+issecrettable = nil
+C_UnitAuras.GetAuraDataByIndex = realIndex
+local indexCalls = auraCalls
+C_UnitAuras.GetUnitAuras = function(unit, filter) if unit == "target" and filter == "HARMFUL" then return { theirs } end return {} end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 1 and auraCalls > indexCalls, "GetUnitAuras first, index for the buffs it misses")
+C_UnitAuras.GetAuraDataByIndex = function() error("index is broken") end
+C_UnitAuras.GetUnitAuras = nil
+C_UnitAuras.GetAuraSlots = function(unit, filter) if unit == "target" and filter == "HARMFUL" then return nil, 4, 5 end end
+C_UnitAuras.GetAuraDataBySlot = function(_, slot) return slot == 4 and theirs or mine end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 2, "slot fallback")
+C_UnitAuras.GetAuraSlots = nil
+AuraUtil = { ForEachAura = function(unit, filter, _, fn)
+	if unit == "target" and filter == "HARMFUL" then
+		fn(theirs)
+		fn(mine)
+	end
+end }
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 2, "ForEachAura fallback")
+AuraUtil = nil
+UnitDebuff = function(unit, i) if unit == "target" and i == 1 then return "Rend", 9, 2, nil, 10, 40, "player" end end
+event("UNIT_AURA", "target")
+ok(shownIcons(AFramesTargetUnit.debuffs) == 1 and AFramesTargetUnit.debuffs[1].count.__text == 2, "UnitDebuff fallback")
+local before = #logs
+SlashCmdList["AFRAMES"]("auras")
+ok(#logs == before + 1 and logs[#logs]:find("HARMFUL GetAuraDataByIndex: error") and logs[#logs]:find("HARMFUL UnitAura: 1, icon secret false") and logs[#logs]:find("combat false"), "aura report " .. tostring(logs[#logs]))
+UnitDebuff = nil
+C_UnitAuras.GetAuraDataByIndex = realIndex
+ABug = nil
+ns.db.dispelMine = true
+event("UNIT_AURA", "party1")
+ok(AFramesParty1.dispel, "border for a debuff I can remove")
+C_UnitAuras.GetAuraDataByIndex = function(unit, i, filter)
+	if filter:find("RAID") then return nil end
+	return realIndex(unit, i, filter)
+end
+event("UNIT_AURA", "party1")
+ok(not AFramesParty1.dispel and shownIcons(AFramesParty1.debuffs) == 3, "no border when I cannot remove it")
+C_UnitAuras.GetAuraDataByIndex = realIndex
+ns.db.dispelMine = false
+ns.db.auraScale = 1.5
+event("UNIT_AURA", "party1")
+ok(AFramesParty1.debuffs[1].size == 33, "aura size option " .. tostring(AFramesParty1.debuffs[1].size))
+ns.db.auraScale = 1
 
 inRaid = true
 event("GROUP_ROSTER_UPDATE")

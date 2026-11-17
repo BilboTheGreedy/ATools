@@ -11,7 +11,17 @@ local function hook(frame, name, ...)
 end
 
 local secure = {}
-function hooksecurefunc(name, fn) secure[name] = fn end
+function hooksecurefunc(a, b, c)
+	if type(a) == "string" then secure[a] = b else secure[b] = c end
+end
+local health = { 1500, 3000 }
+function UnitHealth() return health[1] end
+function UnitHealthMax() return health[2] end
+local auras = {}
+C_UnitAuras = {
+	GetAuraDataByIndex = function(unit, index, filter) return auras[filter .. index] end,
+	GetAuraDataByAuraInstanceID = function(unit, id) return auras[id] end,
+}
 function SharedTooltip_SetBackdropStyle() end
 function GameTooltip_SetDefaultAnchor() end
 local post = {}
@@ -111,6 +121,14 @@ ok(GameTooltipTextLeft2.__text == "<Tinkers>" and GameTooltipTextLeft2.__color[1
 ok(GameTooltipTextLeft3.__text:find("Gnome") and GameTooltipTextLeft3.__text:find("Mage|r"), "level line " .. GameTooltipTextLeft3.__text)
 ok(GameTooltip.__added[1] and GameTooltip.__added[1]:find("Boar"), "target line")
 ok(GameTooltipStatusBar.__color[1] == 0.25, "bar colour")
+ok(ns.hpText == nil, "health text off by default")
+ns.db.healthText = true
+ns.HealthText("mouseover")
+ok(ns.hpText and ns.hpText.__text == "1500 / 3000  50%", "health text " .. tostring(ns.hpText and ns.hpText.__text))
+ns.db.healthText = false
+ns.HealthText("mouseover")
+ok(ns.hpText.__text == "", "health text off")
+ns.db.healthText = true
 
 units.player.guild = "Other"
 units.mouseovertarget.same = "player"
@@ -149,6 +167,15 @@ units.mouseovertarget = { exists = true, name = SECRET }
 GameTooltip:set({ SECRET, SECRET })
 post[2](GameTooltip)
 ok(#GameTooltip.__added == 0, "secret values are left alone")
+ok(GameTooltipTextLeft2 and GameTooltipTextLeft2.__text == SECRET, "secret level line untouched")
+health[1] = SECRET
+local formatted
+function ns.hpText:SetFormattedText(fmt, a, b) formatted = { fmt, a, b } end
+ns.HealthText("mouseover")
+ok(formatted and formatted[2] == SECRET and formatted[3] == 3000, "secret health goes straight to the text")
+health[1] = 1500
+ns.HealthText(nil)
+ok(ns.hpText.__text == "", "no unit, no health text")
 
 GameTooltip.__unit = nil
 units.mouseover = nil
@@ -163,6 +190,10 @@ hook(GameTooltipStatusBar, "OnValueChanged")
 units.mouseover = { exists = true, player = false, reaction = 2 }
 hook(GameTooltipStatusBar, "OnValueChanged")
 ok(GameTooltipStatusBar.__color[1] == 0.9, "bar follows reaction")
+units.mouseover = { exists = true, player = false, name = "Wolf", level = SECRET, reaction = 2 }
+GameTooltip:set({ "Wolf", "Level 20 Beast" })
+post[2](GameTooltip)
+ok(GameTooltipTextLeft2.__text == "Level 20 Beast" and GameTooltipTextLeft2.__color == nil, "hidden level leaves the line alone")
 
 combat = true
 ns.db.combatHide = true
@@ -185,7 +216,16 @@ GameTooltip:set({ "Thing" })
 post[0](GameTooltip, {})
 ok(#GameTooltip.__added == 0, "no item, no lines")
 post[0](ItemRefTooltip, { id = 5 })
-ok(ItemRefTooltip.__added[1] == "Item ID 5", "uncached item still shows id")
+ok(ItemRefTooltip.__added[1] == "In bags 5" and ItemRefTooltip.__added[2] == "Item ID 5", "uncached item still shows count and id")
+C_Item.GetItemCount = function(id, bank) return bank and 17 or 5 end
+ItemRefTooltip:set({})
+post[0](ItemRefTooltip, { id = 5 })
+ok(ItemRefTooltip.__added[1] == "In bags 5, bank 12", "bank count " .. tostring(ItemRefTooltip.__added[1]))
+C_Item.GetItemCount = function() return SECRET end
+ItemRefTooltip:set({})
+post[0](ItemRefTooltip, { id = 5 })
+ok(ItemRefTooltip.__added[1] == "Item ID 5", "secret count skipped")
+ns.db.itemCount = false
 ns.db.itemID = false
 ns.db.itemLevel = false
 ItemRefTooltip:set({})
@@ -200,11 +240,35 @@ post[1](GameTooltip, { id = 133 })
 ok(GameTooltip.__added[1] == "Spell ID 133", "spell id on")
 post[1](GameTooltip, { id = SECRET })
 
+ok(secure.SetUnitAura and secure.SetUnitBuffByAuraInstanceID, "aura hooks")
+units.party1 = { exists = true, player = true, name = "Healer", class = { multi = true, "Mage", "MAGE" } }
+auras.HELPFUL3 = { sourceUnit = "party1", spellId = 774 }
+auras[77] = { sourceUnit = SECRET, spellId = SECRET }
+GameTooltip:set({ "Renew" })
+secure.SetUnitAura(GameTooltip, "player", 3, "HELPFUL")
+ok(GameTooltip.__added[1]:find("From ") and GameTooltip.__added[1]:find("Healer") and GameTooltip.__added[2] == "Spell ID 774", "aura source " .. tostring(GameTooltip.__added[1]))
+GameTooltip:set({ "Renew" })
+secure.SetUnitBuff(GameTooltip, "player", 3)
+ok(#GameTooltip.__added == 2, "buff by index")
+GameTooltip:set({ "Renew" })
+secure.SetUnitBuffByAuraInstanceID(GameTooltip, "player", 77)
+secure.SetUnitDebuff(GameTooltip, "player", 9)
+secure.SetUnitAura(GameTooltip, SECRET, SECRET, SECRET)
+ok(#GameTooltip.__added == 0, "secret or missing aura adds nothing")
+ns.db.auraSource = false
+ns.db.spellID = false
+secure.SetUnitAura(GameTooltip, "player", 3, "HELPFUL")
+ok(#GameTooltip.__added == 0, "aura lines off")
+ns.db.auraSource = true
+
 secure.GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
 ok(GameTooltip.__anchor == nil, "default anchor untouched")
 ns.db.anchor = "cursor"
 secure.GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
 ok(GameTooltip.__anchor == "ANCHOR_CURSOR", "cursor anchor")
+ns.db.anchor = "cursorRight"
+secure.GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
+ok(GameTooltip.__anchor == "ANCHOR_CURSOR_RIGHT", "cursor right anchor")
 ns.db.anchor = "fixed"
 secure.GameTooltip_SetDefaultAnchor(GameTooltip)
 ok(GameTooltip.__anchor == "ANCHOR_NONE" and ATipAnchor, "fixed anchor")
@@ -233,7 +297,12 @@ ns.SetBorder(GameTooltip, 1, 1, 1)
 ns.db.style = true
 local found
 for _, a in ipairs(ACore.addons) do if a.name == "ATip" then found = a end end
-ok(found, "registered with the launcher")
+ok(found and type(found.options) == "function", "registered with the launcher")
+local n = 0
+for _, e in ipairs(found.options()) do
+	if e.func then e.func() n = n + 1 end
+end
+ok(n >= 25, "control panel options " .. n)
 found.toggle()
 flush()
 

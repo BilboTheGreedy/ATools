@@ -26,7 +26,14 @@ bit = { band = function(a, b)
 	return r
 end }
 Enum.EncounterTimelineEventState = { Active = 0, Paused = 1, Finished = 2, Canceled = 3 }
-Enum.EncounterTimelineIconSet = { TankAlert = 1, HealerAlert = 2, DamageAlert = 4, Deadly = 8, Dispel = 16, Enrage = 32 }
+Enum.EncounterEventIconmask = { DeadlyEffect = 1, EnrageEffect = 2, BleedEffect = 4, MagicEffect = 8, TankRole = 128 }
+local addonSent, prefixes = {}, {}
+C_ChatInfo = {
+	SendAddonMessage = function(prefix, text, channel) addonSent[#addonSent + 1] = prefix .. ":" .. text .. ":" .. channel end,
+	RegisterAddonMessagePrefix = function(prefix) prefixes[prefix] = true end,
+	SendChatMessage = function(text, channel) SendChatMessage(text, channel) end,
+}
+function UnitName() return "Anna" end
 local states, infos = {}, {}
 local timerUsed = 0
 C_EncounterTimeline = {
@@ -48,6 +55,8 @@ local ns = M.load("ABoss", "ABoss")
 event("PLAYER_LOGIN")
 flush()
 
+ok(ABossBars and ABossEmphasis and ABossMessages, "movable frames exist from login")
+ok(#ACore.movers >= 3 and prefixes.ABoss, "movers and addon prefix registered")
 local B = ns.Bars
 local function tick(dt)
 	now = now + dt
@@ -62,11 +71,16 @@ ok(ns.Timers.Seconds("1:30") == 90 and ns.Timers.Seconds("2m") == 120 and ns.Tim
 states[1] = 0
 event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 1, source = 0, duration = 20, spellName = "Flame Breath", iconFileID = 135805, severity = 1 })
 states[2] = 0
-event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 2, source = 0, duration = 90, spellName = SECRET, iconFileID = SECRET, severity = 0, icons = 8 })
+event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 2, source = 0, duration = 90, spellName = SECRET, iconFileID = SECRET, severity = 0, icons = 2 })
 event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 3, source = 1, duration = 30, spellName = "Script" })
 event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 4, source = 2, duration = 30, spellName = "Edit" })
 ok(#B.active == 2 and B.Has("tl1") and B.Has("tl2") and not B.Has("tl3"), "timeline bars " .. #B.active)
 ok(B.byId.tl1.color == 1 and B.byId.tl2.color == 2, "severity colours")
+ok(B.byId.tl2.frame.left.__text == SECRET and B.byId.tl2.frame.icon:IsShown(), "secret name and icon passed to the widgets")
+states[9] = 0
+event("ENCOUNTER_TIMELINE_EVENT_ADDED", { id = 9, source = 0, duration = 200, spellName = "Tank", severity = 1, icons = 128 })
+ok(B.byId.tl9.color == 1 and not B.byId.tl9.frame.icon:IsShown(), "role icons keep the severity colour")
+event("ENCOUNTER_TIMELINE_EVENT_REMOVED", 9)
 ok(B.active[1].id == "tl1", "sorted by time left")
 tick(5)
 ok(math.abs(B.Remaining("tl1") - 15) < 0.01, "remaining")
@@ -108,6 +122,16 @@ infos = {}
 local before = sounds
 event("ENCOUNTER_WARNING", { text = SECRET, severity = 2, shouldShowWarning = true, shouldPlaySound = true })
 ok(sounds == before + 1 and ABossMessages, "warning shown with sound")
+local lastText
+local oldSet = M.methods.SetText
+M.methods.SetText = function(self, t) lastText = t oldSet(self, t) end
+event("ENCOUNTER_WARNING", { text = "%s casts Fear on %s", casterName = "Boss", targetName = "Anna", severity = 1, shouldPlaySound = false })
+ok(lastText == "Boss casts Fear on Anna", "warning text formatted " .. tostring(lastText))
+event("ENCOUNTER_WARNING", { text = "Run away", severity = 1, shouldPlaySound = false })
+ok(lastText == "Run away", "plain warning text")
+event("ENCOUNTER_WARNING", { text = "50% left", severity = 1, shouldPlaySound = false })
+ok(lastText == "50% left", "unformattable warning kept")
+M.methods.SetText = oldSet
 event("ENCOUNTER_WARNING", { text = "Quiet", severity = 0, shouldPlaySound = false })
 ok(sounds == before + 1, "quiet warning")
 event("ENCOUNTER_WARNING", { text = "Hidden", shouldShowWarning = false })
@@ -178,6 +202,22 @@ SlashCmdList["ABOSSBREAK"]("")
 SlashCmdList["ABOSSBREAK"]("0")
 ok(not B.Has("break") and chat[#chat] == "PARTY:Break cancelled", "break cancel")
 SlashCmdList["ABOSSBREAK"]("x")
+ok(addonSent[1] == "ABoss:break 120:PARTY" and addonSent[#addonSent] == "ABoss:break 0:PARTY", "break shared with the group")
+local shared, said = #addonSent, #chat
+event("CHAT_MSG_ADDON", "ABoss", "break 90", "PARTY", "Bertil-Realm")
+ok(B.Has("break") and math.abs(B.Remaining("break") - 90) < 0.01 and #addonSent == shared and #chat == said, "break received from the group")
+event("CHAT_MSG_ADDON", "ABoss", "break 0", "PARTY", "Bertil-Realm")
+ok(not B.Has("break"), "break cancel received")
+event("CHAT_MSG_ADDON", "ABoss", "break 60", "PARTY", "Anna-Realm")
+event("CHAT_MSG_ADDON", "Other", "break 60", "PARTY", "Bertil")
+event("CHAT_MSG_ADDON", "ABoss", "break 60", "WHISPER", "Bertil")
+event("CHAT_MSG_ADDON", "ABoss", "nonsense", "PARTY", "Bertil")
+event("CHAT_MSG_ADDON", SECRET, SECRET, SECRET, SECRET)
+ok(not B.Has("break"), "own, foreign and malformed messages ignored")
+ns.db.sync = false
+event("CHAT_MSG_ADDON", "ABoss", "break 60", "PARTY", "Bertil")
+ok(not B.Has("break"), "sync can be turned off")
+ns.db.sync = true
 combat = true
 local sent = #chat
 SlashCmdList["ABOSSBREAK"]("1")
@@ -253,7 +293,7 @@ local listed
 for _, a in ipairs(ACore.addons) do
 	if a.name == "ABoss" then listed = a end
 end
-ok(listed, "registered")
+ok(listed and #listed.options() > 15, "registered with options")
 listed.toggle()
 
 print_real(string.format("ok: %d checks", M.checks()))

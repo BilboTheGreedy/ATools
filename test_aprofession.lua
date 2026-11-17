@@ -596,4 +596,88 @@ SlashCmdList["ACORE"]("profession")
 ACore.OpenPanel("AProfession")
 ok(ACorePanel and ACorePanel:IsShown() and #ACorePanel.list.data >= 8, "options in the control panel")
 
+ns.db.replace = false
+C_TradeSkillUI.GetChildProfessionInfo = function() return { professionName = "", skillLevel = 0, maxSkillLevel = 0 } end
+event("TRADE_SKILL_SHOW")
+flush()
+local n1, r1, m1, i1 = ns.Trade.Info()
+ok(n1 == "First Aid" and r1 == 80 and m1 == 150 and i1 == 129, "empty child info falls back to the base profession")
+C_TradeSkillUI.GetChildProfessionInfo = function() return { professionName = "Classic First Aid", parentProfessionName = "First Aid", parentProfessionID = 129, skillLevel = 90, maxSkillLevel = 150 } end
+n1, r1 = ns.Trade.Info()
+ok(n1 == "First Aid" and r1 == 90, "child rank with the base name")
+C_TradeSkillUI.GetChildProfessionInfo = nil
+C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionID = 185, professionName = "", skillLevel = 0, maxSkillLevel = 0 } end
+C_TradeSkillUI.GetProfessionInfoBySkillLineID = function(id)
+	if id == 185 then return { professionName = "Cuisine", skillLevel = 60, maxSkillLevel = 75 } end
+	return { professionName = "", skillLevel = 0, maxSkillLevel = 0 }
+end
+n1, r1, m1 = ns.Trade.Info()
+ok(n1 == "Cuisine" and r1 == 60 and m1 == 75, "name and rank from the skill line when the window gives none")
+C_TradeSkillUI.GetProfessionInfoBySkillLineID = nil
+n1 = ns.Trade.Info()
+ok(n1 == "Cooking", "known skill line id still names the profession")
+C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = "" } end
+ok(ns.Trade.Info() == nil, "no name, no profession")
+event("TRADE_SKILL_LIST_UPDATE")
+flush()
+ns.Store.Save("", 1, 2, { { name = "x", reagents = {} } })
+ok(ns.db.chars[ns.charKey][""] == nil, "nothing stored under an empty name")
+C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionID = 129, professionName = "First Aid", skillLevel = 80, maxSkillLevel = 150 } end
+event("TRADE_SKILL_CLOSE")
+
+GetTradeSkillTools = function() return "Anvil", true, "Hammer", false end
+event("TRADE_SKILL_SHOW")
+flush()
+ok(ns.Trade.mode == "modern", "still modern")
+C_TradeSkillUI.GetAllRecipeIDs = nil
+event("TRADE_SKILL_CLOSE")
+event("TRADE_SKILL_SHOW")
+flush()
+local okTools
+for _, r in ipairs(ns.Window.State().recipes) do
+	if r.tools == "Anvil, Hammer" then okTools = true end
+end
+ok(ns.Trade.mode == "trade" and okTools, "all classic tools listed")
+event("TRADE_SKILL_CLOSE")
+
+C_SkillInfo = {
+	GetNumSkillLines = function() return 1 end,
+	GetSkillLineInfo = function() return { name = "Schneiderei", skillID = 197, rank = 12 } end,
+}
+C_TradeSkillUI.GetProfessionInfoBySkillLineID = function(id)
+	if id == 197 then return { professionName = "Schneiderei", skillLevel = 12, maxSkillLevel = 75 } end
+	if id == 202 then return { professionName = "Engineering", skillLevel = 5, maxSkillLevel = 75 } end
+	return { professionName = "", skillLevel = 0, maxSkillLevel = 0 }
+end
+local tailor, engineer
+for _, e in ipairs(Tabs.Entries()) do
+	if e.id == 197 and e.rank == 12 and e.max == 75 then tailor = true end
+	if e.id == 202 and e.rank == 5 then engineer = true end
+end
+ok(tailor and engineer, "skill maximum and extra professions from the trade skill line")
+C_SkillInfo = nil
+C_TradeSkillUI.GetProfessionInfoBySkillLineID = nil
+
+ns.db.chars["Alt - Realm"] = { Alchemy = { rank = 300, max = 300, recipes = {}, cooldowns = { Transmute = clock + 7200 } } }
+local sawCooldown
+for _, d in ipairs(ns.Overview.Rows("")) do
+	if d.kind == "note" and d.text == "Cooldown: Transmute" and d.right == "2h 0m" then sawCooldown = true end
+end
+ok(sawCooldown, "cooldowns of other characters in the overview")
+ns.db.chars["Alt - Realm"] = nil
+
+local openedNow
+C_TradeSkillUI.OpenTradeSkill = function(id) openedNow = id end
+ns.Window.Select("Blacksmithing")
+local openRow
+for _, d in ipairs(frame.detailList.data) do
+	if d.kind == "open" then openRow = d end
+end
+ok(openRow and openRow.entry.id == 164, "recorded view offers to open the profession")
+local drow = frame.detailList.rows[1]
+drow.data = openRow
+drow.__scripts.OnClick(drow, "LeftButton")
+ok(openedNow == 164, "open row opens it")
+C_TradeSkillUI.OpenTradeSkill = nil
+
 print_real(string.format("ok: %d checks", M.checks()))

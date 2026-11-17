@@ -353,4 +353,115 @@ end
 ok(ns.db.rolls == false and ns.db.rewards == false, "options toggle back")
 ns.db.rolls, ns.db.rewards = nil, nil
 
+items[160] = { name = "Use Trinket", loc = "INVTYPE_TRINKET", class = 4, sub = 0, ilvl = 60, stats = {}, lines = {
+	"Use: Increases attack power by 280 for 20 sec.", "(2) Set: Improves your chance to hit by 1%.",
+	"Chance on hit: Increases attack power by 100.", "Equip: +10 Attack Power.",
+} }
+items[161] = { name = "Wall", loc = "INVTYPE_SHIELD", class = 4, sub = 6, ilvl = 60, stats = {}, lines = { "2,121 Armor", "45 Block" } }
+items[162] = { name = "Bow", loc = "INVTYPE_RANGED", class = 2, sub = 2, ilvl = 60, stats = { ITEM_MOD_DAMAGE_PER_SECOND_SHORT = 30, ITEM_MOD_AGILITY_SHORT = 5 }, lines = { "Speed 2.90" } }
+local t = ns.Stats(160)
+ok(t.ap == 10 and not t.hit, "use, proc and set lines are not counted")
+local w = ns.Stats(161)
+ok(w.armor == 2121 and w.blockvalue == 45, "armor with a thousands separator and shield block " .. tostring(w.armor))
+local bow = ns.Stats(162)
+ok(bow.rdps == 30 and not bow.dps and not bow.speed, "ranged weapons have their own dps stat")
+ok(ns.Score(162) < 10, "a bow is no weapon upgrade for a warrior " .. ns.Score(162))
+local hunter
+for _, set in ipairs(ns.SETS) do
+	if set.key == "HUNTER" then hunter = set.w end
+end
+ok(ns.ScoreStats(bow, hunter) == 95 and ns.ScoreStats(ns.Stats(121), hunter) < 10, "hunters value the bow, not the sword")
+
+function UnitLevel() return 30 end
+local plate = { equipLoc = "INVTYPE_HEAD", classID = 4, subclassID = 4, minLevel = 25 }
+local mail = { equipLoc = "INVTYPE_HEAD", classID = 4, subclassID = 3, minLevel = 25 }
+local leather = { equipLoc = "INVTYPE_HEAD", classID = 4, subclassID = 2, minLevel = 25 }
+ok(not ns.Usable(plate) and ns.Usable(mail), "no plate before level 40")
+plate.minLevel = 45
+ok(ns.Usable(plate), "plate that needs level 40 or more counts")
+ns.playerClass = "HUNTER"
+ok(not ns.Usable(mail) and ns.Usable(leather), "no mail for a level 30 hunter")
+ns.playerClass = "WARRIOR"
+function UnitLevel() return 60 end
+ok(ns.Usable(plate) and ns.Usable(mail), "plate at 60")
+local offhand = { equipLoc = "INVTYPE_WEAPONOFFHAND", classID = 2, subclassID = 7 }
+function UnitLevel() return 5 end
+ok(not ns.Usable(offhand), "no off hand weapon before dual wield")
+function CanDualWield() return true end
+ok(ns.Usable(offhand), "the client decides about dual wield when it can")
+CanDualWield = nil
+function UnitLevel() return 60 end
+
+for i = 1, 4 do QuestInfoRewardsFrame.RewardButtons[i].objectType = "item" end
+local coin = CreateFrame("Button")
+coin.type, coin.id, coin.objectType = "reward", 1, "currency"
+table.insert(QuestInfoRewardsFrame.RewardButtons, 4, coin)
+QuestInfoFrame = { questLog = true, rewardsFrame = QuestInfoRewardsFrame }
+local logCalls = 0
+function GetQuestLogItemLink(kind, i)
+	logCalls = logCalls + 1
+	if kind == "choice" then return link(choices[i]) end
+	return link(111)
+end
+local logList, logBest = R.Log()
+ok(logCalls == 4 and #logList == 4 and logBest == 1, "quest log rewards judged, currency skipped")
+ok(R.badges[QuestInfoRewardsFrame.RewardButtons[1]]:IsShown() and R.badges[QuestInfoRewardsFrame.RewardButtons[1]].best:IsShown(), "quest log badge")
+ok(not R.badges[coin], "no badge on a currency reward")
+choices = { 140 }
+QuestInfoRewardsFrame.RewardButtons[2]:Hide()
+QuestInfoRewardsFrame.RewardButtons[3]:Hide()
+R.Log()
+ok(not R.badges[QuestInfoRewardsFrame.RewardButtons[1]]:IsShown() and not R.badges[QuestInfoRewardsFrame.RewardButtons[2]]:IsShown(), "old badges cleared for the next quest")
+
+choices = { 101, 102, 140 }
+QuestInfoRewardsFrame.RewardButtons[2]:Show()
+QuestInfoRewardsFrame.RewardButtons[3]:Show()
+R.Log()
+QuestFrame = nil
+QuestInfoRewardsFrame.IsShown = function() return true end
+event("QUEST_ITEM_UPDATE")
+flush()
+ok(R.badges[QuestInfoRewardsFrame.RewardButtons[1]]:IsShown(), "item updates keep the quest log badges")
+
+GroupLootFrame1.rollID = 9
+R.Roll(7, true)
+GroupLootFrame1.rollID = 9
+R.labels[GroupLootFrame1]:Show()
+R.Roll(9, true)
+ok(not R.labels[GroupLootFrame1]:IsShown(), "label hidden when the next roll has no verdict")
+
+local equippedCall
+C_Item.EquipItemByName = function(item, slot) equippedCall = { item, slot } end
+C_Container = {
+	GetContainerNumSlots = function(bag) return bag == 0 and 4 or 0 end,
+	GetContainerItemLink = function(_, slot)
+		if slot == 1 then return link(101) end
+		if slot == 2 then return link(140) end
+		if slot == 3 then return link(100) end
+		return nil
+	end,
+}
+local bagUps = ns.BagUpgrades()
+ok(#bagUps == 1 and bagUps[1].id == 101 and bagUps[1].slot == 1, "upgrades in the bags listed")
+ns.Window.Show("character")
+local bagRow
+for i, d in ipairs(frame.list.data) do
+	if d.kind == "bag" then bagRow = d end
+end
+ok(bagRow, "bag upgrades on the character tab")
+frame.list.rows[1].data = bagRow
+frame.list.rows[1].__scripts.OnClick(frame.list.rows[1], "LeftButton")
+ok(equippedCall and equippedCall[2] == 1, "click equips it")
+equippedCall = nil
+function InCombatLockdown() return true end
+frame.list.rows[1].__scripts.OnClick(frame.list.rows[1], "LeftButton")
+ok(equippedCall == nil, "not in combat")
+InCombatLockdown = nil
+ns.db.rolls, ns.db.rewards = true, true
+local checks = 0
+for _, e in ipairs(R.Options()) do
+	if e.checked == true then checks = checks + 1 end
+end
+ok(checks == 5, "options on by default " .. checks)
+
 print_real(string.format("ok: %d checks, %d sets", M.checks(), #ns.SETS))

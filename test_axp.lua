@@ -31,6 +31,19 @@ C_Reputation = {
 MainMenuExpBar = M.obj("Frame")
 local alpha
 function MainMenuExpBar:SetAlpha(a) alpha = a end
+local expMouse = true
+function MainMenuExpBar:IsMouseEnabled() return expMouse end
+function MainMenuExpBar:EnableMouse(on) expMouse = on end
+function hooksecurefunc(t, name, fn)
+	local orig = t[name]
+	t[name] = function(...)
+		orig(...)
+		fn(...)
+	end
+end
+local chatText
+function ChatEdit_InsertLink() return false end
+function ChatFrame_OpenChat(text) chatText = text end
 local bars = {}
 function M.methods:SetMinMaxValues(lo, hi) self.__min, self.__max = lo, hi end
 function M.methods:SetValue(v) self.__value = v end
@@ -62,7 +75,7 @@ event("QUEST_TURNED_IN", 5, 1400, 0)
 event("QUEST_TURNED_IN", 6, SECRET, 0)
 flush()
 local s = T.Session()
-ok(s.xp == 2000 and s.kills == 2, "session xp " .. s.xp)
+ok(s.xp == 2000 and s.kills == 3, "session xp " .. s.xp)
 ok(T.Rate() == 4000, "rate " .. T.Rate())
 local e = T.Estimate()
 ok(e.left == 7000 and e.seconds == 6300 and e.kills == 10 and e.quests == 5, "estimate " .. tostring(e.kills) .. " " .. tostring(e.quests))
@@ -89,6 +102,42 @@ event("CHAT_MSG_COMBAT_FACTION_CHANGE", "Reputation with Stormwind increased by 
 event("CHAT_MSG_COMBAT_FACTION_CHANGE", SECRET)
 flush()
 ok(watchedIndex == 2, "follow off")
+ns.db.autoRep = true
+factions[1].currentStanding = 4700
+factions[2].currentStanding = 520
+event("UPDATE_FACTION")
+flush()
+ok(watchedIndex == 1, "follows the biggest gain without chat text")
+factions[2].currentStanding = 560
+event("UPDATE_FACTION")
+flush()
+ok(watchedIndex == 2 and s.reps["Argent Dawn"].gained == 60, "unwatched gains counted " .. s.reps["Argent Dawn"].gained)
+ns.db.autoRep = false
+clock = clock + 10
+event("CHAT_MSG_COMBAT_XP_GAIN", SECRET)
+me.xp = 3300
+event("PLAYER_XP_UPDATE")
+ok(s.kills == 4 and #s.killXP == 3 and s.killXP[3] == 300, "unreadable kill uses xp diff")
+clock = clock + 10
+me.xp = 3500
+event("PLAYER_XP_UPDATE")
+event("CHAT_MSG_COMBAT_XP_GAIN", SECRET)
+ok(s.kills == 5 and s.killXP[4] == 200, "xp diff before unreadable kill")
+event("QUEST_TURNED_IN", 7, 0, 0)
+me.xp = 4000
+event("PLAYER_XP_UPDATE")
+event("CHAT_MSG_COMBAT_XP_GAIN", SECRET)
+ok(s.kills == 6 and #s.killXP == 4, "quest xp is not a kill")
+clock = clock + 10
+me.xp = 3000
+s.xp, s.kills, s.killXP = 2000, 2, { 200, 1200 }
+event("PLAYER_XP_UPDATE")
+s.xp = 2000
+flush()
+M.mods.shift = true
+frame.xp.__scripts.OnMouseUp(frame.xp, "LeftButton")
+M.mods.shift = false
+ok(chatText and chatText:find("Level 20: 3000 / 10.0k XP (30%), 7000 to go", 1, true) and chatText:find("Argent Dawn: 560 / 3000", 1, true), "share " .. tostring(chatText))
 
 clock = clock + 600
 me.level, me.xp, me.xpMax = 21, 500, 12000
@@ -129,10 +178,27 @@ ns.db.text = "full"
 
 ns.db.hideDefault = true
 ns:Fire("OPTIONS")
-ok(alpha == 0, "blizzard hidden")
+ok(alpha == 0 and expMouse == false, "blizzard hidden")
+MainMenuExpBar:SetAlpha(1)
+ok(alpha == 0, "stays hidden when shown again")
 ns.db.hideDefault = false
 ns:Fire("OPTIONS")
-ok(alpha == 1, "blizzard restored")
+ok(alpha == 1 and expMouse == true, "blizzard restored")
+MainMenuExpBar:SetAlpha(0.5)
+ok(alpha == 0.5, "left alone when off")
+ns.db.hover = true
+ns.Bars.Refresh()
+local shown = {}
+function frame.xp.left:SetAlpha(a) shown[#shown + 1] = a end
+frame.xp.__scripts.OnEnter(frame.xp)
+frame.xp.__scripts.OnLeave(frame.xp)
+ok(shown[1] == 1 and shown[2] == 0, "text on mouseover only")
+ns.db.hover = false
+ok(#frame.xp.ticks == 9, "ticks")
+me.level = SECRET
+ns.Bars.Refresh()
+ok(frame.xp.left.__text:find("Level %?"), "unreadable level")
+me.level = 22
 
 me.xp = SECRET
 event("PLAYER_XP_UPDATE")
@@ -176,7 +242,7 @@ end
 for _, entry in ipairs(ns.Options()) do
 	if entry.func then entry.func() end
 end
-for _, cmd in ipairs({ "", "lock", "unlock", "reset", "report", "session", "help" }) do
+for _, cmd in ipairs({ "", "lock", "unlock", "reset", "report", "share", "session", "help" }) do
 	SlashCmdList["AXP"](cmd)
 end
 flush()

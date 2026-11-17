@@ -20,6 +20,12 @@ function AbbreviateNumbers(v)
 end
 
 local sent = {}
+local registered = {}
+M.methods.RegisterEvent = function(_, name) registered[name] = true end
+function StaticPopup_Show(name)
+	local d = StaticPopupDialogs[name]
+	if d and d.OnAccept then d.OnAccept() end
+end
 C_ChatInfo = { SendChatMessage = function(msg, channel) sent[#sent + 1] = channel .. ": " .. msg end }
 
 Enum.DamageMeterType = {
@@ -62,6 +68,21 @@ C_DamageMeter = {
 		}
 	end,
 	ResetAllCombatSessions = function() resets = resets + 1 end,
+	GetAvailableCombatSessions = function()
+		return {
+			{ sessionID = 11, name = "Trash", durationSeconds = 40 },
+			{ sessionID = 12, name = "Ragnaros", durationSeconds = 200 },
+		}
+	end,
+	GetCombatSessionFromID = function(id, t)
+		return {
+			combatSources = { { name = "Old " .. id, sourceGUID = "Player-9", classFilename = "MAGE", isLocalPlayer = false, totalAmount = id * 100, amountPerSecond = 5 } },
+			maxAmount = id * 100, totalAmount = id * 100, durationSeconds = 200,
+		}
+	end,
+	GetCombatSessionSourceFromID = function(id, t, guid)
+		return { maxAmount = 5, totalAmount = 5, combatSpells = { { spellID = 133, totalAmount = id, amountPerSecond = 1 } } }
+	end,
 }
 
 M.load("ACore", "ACore")
@@ -170,11 +191,77 @@ ok(clicked > 10, "gear menu entries " .. clicked)
 ok(resets >= 1, "reset reaches the game meter")
 ok(#sent >= 4 and sent[1]:find("^SAY: AMeter: "), "report sent " .. #sent)
 ok(not frame:IsShown() and ns.db.shown == false, "hide from menu")
+ok(not registered.COMBAT_LOG_EVENT_UNFILTERED, "combat log never registered next to the game meter")
+ok(sent[#sent]:find("^OFFICER: ") or sent[#sent - 1]:find("^OFFICER: "), "officer report")
+ns.db.combatOnly = false
+ns.db.width = 250
 SlashCmdList["AMETER"]("")
 ok(frame:IsShown(), "slash shows again")
 frame.segButton.__scripts.OnClick(frame.segButton, "LeftButton")
 frame.segButton.__scripts.OnClick(frame.segButton, "LeftButton")
 frame.__scripts.OnUpdate(frame, 1.5)
+
+ns.db.mode = "damage"
+ns:Fire("VIEW_CHANGED")
+frame.titleButton.__scripts.OnClick(frame.titleButton, "LeftButton")
+local picked = false
+for _, f in ipairs(M.frames) do
+	local e = rawget(f, "entry")
+	if e and f:IsShown() and e.text and e.text:find("^Ragnaros") then
+		f.__scripts.OnClick(f, "LeftButton")
+		picked = true
+		break
+	end
+end
+ok(picked and #rows() == 1 and rows()[1].name == "Old 12" and rows()[1].value == 1200, "earlier fight from the list")
+ok(frame.titleButton.text.__text:find("3:20"), "earlier fight duration " .. tostring(frame.titleButton.text.__text))
+local old = bars()[1]
+old.__scripts.OnMouseUp(old, "LeftButton")
+ok(#rows() == 1 and rows()[1].spell == 133 and rows()[1].value == 12, "earlier fight spells")
+frame.titleButton.__scripts.OnClick(frame.titleButton, "LeftButton")
+frame.segButton.__scripts.OnClick(frame.segButton, "LeftButton")
+ok(#rows() == 3 and ns.db.segment == "current", "segment button leaves the earlier fight")
+
+function UnitGUID(u) if u == "player" then return "Player-me" end end
+local asked
+local oldSource = C_DamageMeter.GetCombatSessionSourceFromType
+C_DamageMeter.GetCombatSessionSourceFromType = function(st, t, guid)
+	asked = guid
+	return oldSource(st, t, guid)
+end
+secretMode = true
+ns:Fire("VIEW_CHANGED")
+local mine = bars()[1]
+mine.__scripts.OnMouseUp(mine, "LeftButton")
+ok(asked == "Player-me" and #rows() == 2, "own spells use the player guid in combat")
+frame.titleButton.__scripts.OnClick(frame.titleButton, "LeftButton")
+C_DamageMeter.GetCombatSessionSourceFromType = function(st, t, guid)
+	if issecretvalue(guid) then error("secret") end
+	return oldSource(st, t, guid)
+end
+local other = bars()[2]
+other.__scripts.OnMouseUp(other, "LeftButton")
+ok(rows()[1].kind == "note" and rows()[1].text:find("hidden in combat"), "other players' spells hidden in combat")
+frame.titleButton.__scripts.OnClick(frame.titleButton, "LeftButton")
+C_DamageMeter.GetCombatSessionSourceFromType = oldSource
+UnitGUID = nil
+secretMode = false
+
+ns.db.combatOnly = true
+event("PLAYER_REGEN_ENABLED")
+ok(not frame:IsShown() and ns.db.shown, "hidden out of combat")
+event("PLAYER_REGEN_DISABLED")
+ok(frame:IsShown(), "shown in combat")
+ns.db.combatOnly = false
+event("PLAYER_REGEN_ENABLED")
+SlashCmdList["AMETER"]("")
+SlashCmdList["AMETER"]("")
+ok(frame:IsShown(), "shown after turning combat only off")
+local panel
+for _, a in ipairs(ACore.addons) do
+	if a.name == "AMeter" then panel = a.options() end
+end
+ok(panel and #panel > 15, "options for the control panel")
 
 secretMode = true
 ns.db.rows = 8
@@ -189,6 +276,9 @@ ok(#sent == before, "no report while values are hidden")
 ok(printed[#printed]:find("hidden") or printed[#printed - 1]:find("hidden") or printed[#printed - 2]:find("hidden") or printed[#printed - 3]:find("hidden"), "report refusal printed")
 SlashCmdList["AMETER"]("")
 secretMode = false
+ns.db.combatOnly = false
+SlashCmdList["AMETER"]("")
+SlashCmdList["AMETER"]("")
 
 available = false
 ns:Fire("VIEW_CHANGED")
@@ -210,12 +300,24 @@ event("PLAYER_ENTERING_WORLD")
 ok(resets == resetsBefore + 1, "auto reset on entering an instance")
 event("PLAYER_ENTERING_WORLD")
 ok(resets == resetsBefore + 1, "no second reset in the same instance")
+function GetInstanceInfo() return "Molten Core", "raid", 1, "Normal", 40, 0, false, 409 end
+event("PLAYER_ENTERING_WORLD", false, true)
+ok(resets == resetsBefore + 1, "no reset when reloading inside an instance")
+event("PLAYER_ENTERING_WORLD")
+ok(resets == resetsBefore + 1, "instance remembered across the reload")
 event("DAMAGE_METER_COMBAT_SESSION_UPDATED", 0, 1)
 event("DAMAGE_METER_CURRENT_SESSION_UPDATED")
 event("DAMAGE_METER_RESET")
 flush()
 
+ok(not registered.COMBAT_LOG_EVENT_UNFILTERED, "combat log still not registered")
 C_DamageMeter = nil
+AMeterDB = nil
+local ns3 = M.load("AMeter", "AMeter")
+event("PLAYER_LOGIN")
+flush()
+ok(ns3.Data.Source() == nil and not registered.COMBAT_LOG_EVENT_UNFILTERED, "no combat log on a client with secret values")
+issecretvalue = nil
 AMeterDB = nil
 local units = {
 	player = { "Player-1", "Anna", "WARRIOR" },

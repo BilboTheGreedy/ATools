@@ -4,12 +4,14 @@ local ok, event, flush, printed, mods = M.ok, M.event, M.flush, M.printed, M.mod
 local combat = false
 function InCombatLockdown() return combat end
 function hooksecurefunc(t, name, fn)
+	if type(t) == "string" then t, name, fn = _G, t, name end
 	local old = t[name]
 	t[name] = function(...)
 		old(...)
 		fn(...)
 	end
 end
+function UpdateUIPanelPositions() end
 function CreateVector2D(x, y)
 	return { x = x, y = y, GetXY = function(self) return self.x, self.y end }
 end
@@ -87,6 +89,7 @@ function Minimap:GetZoomLevels() return 6 end
 function Minimap:SetMaskTexture(t) self.__mask = t end
 function Minimap:HookScript(name, fn) self.__scripts[name] = fn end
 MinimapCluster = CreateFrame("Frame", "MinimapCluster")
+function MinimapCluster:UpdateMinimapConfig() Minimap.__mask = "round" end
 function MinimapCluster:SetScale(s) self.__scale = s end
 function MinimapCluster:SetPoint(...) self.__point = { ... } end
 MinimapZoomIn = CreateFrame("Button", "MinimapZoomIn")
@@ -114,7 +117,25 @@ event("PLAYER_LOGIN")
 ok(ns.db and ns.db.map.window, "defaults")
 ok(AMapBar, "map bar built")
 
-ok(sc.zoomLevels.amap and #sc.zoomLevels == 5, "zoom levels extended " .. #sc.zoomLevels)
+ok(MinimapCluster.__scale == nil and MinimapCluster.__point == nil, "minimap cluster untouched at default size")
+ok(#sc.zoomLevels == 5 and sc.zoomLevels.amap == nil, "zoom levels extended " .. #sc.zoomLevels)
+ns.db.way = { arrow = true }
+ns:Fire("READY")
+ok(ns.db.way == nil, "old waypoint settings dropped")
+local colors = {}
+function AMapBar.info:SetTextColor(r, g, b)
+	assert(type(r) == "number" and type(g) == "number" and type(b) == "number", "text colour needs numbers")
+	colors[#colors + 1] = { r, g, b }
+end
+ns.Map.Go(1415)
+ok(AMapBar.info.__text == "" and colors[#colors][1] == 1 and colors[#colors][3] == 1, "map without zone info keeps a white colour")
+ns.Map.Go(1429)
+ok(colors[#colors][2] == 0.8, "zone info colour " .. colors[#colors][2])
+local cursorFn = function() return 1, 2 end
+sc.GetCursorPosition = cursorFn
+WorldMapFrame.__scripts.OnShow(WorldMapFrame)
+ok(sc.GetCursorPosition == cursorFn, "map cursor function left alone")
+ok(ns.Map.Continents()[1].name == "Eastern Kingdoms", "continents sorted")
 ok(sc.zoomLevels[5].scale > 4, "deepest zoom scale " .. sc.zoomLevels[5].scale)
 sc:CreateZoomLevels()
 ok(#sc.zoomLevels == 5, "zoom re-extended after rebuild")
@@ -213,11 +234,21 @@ ns.db.minimap.zone = true
 ns:Fire("OPTIONS")
 ok(MinimapZoomIn:IsShown(), "zoom buttons restored")
 ok(Minimap.__mask == "Interface\\Buttons\\WHITE8X8" and GetMinimapShape() == "SQUARE" and not MinimapBorder:IsShown(), "square minimap")
+MinimapCluster:UpdateMinimapConfig()
+ok(Minimap.__mask == "Interface\\Buttons\\WHITE8X8", "square mask survives a minimap refresh")
 tickAll(1)
 ok(AMapMinimapInfo.coords.__text == "50.0, 50.0" and AMapMinimapInfo.zone.__text == "Goldshire", "minimap info text")
 ns.db.minimap.square = false
 ns:Fire("OPTIONS")
-ok(Minimap.__mask == "Textures\\MinimapMask" and GetMinimapShape() == "ROUND" and MinimapBorder:IsShown(), "round minimap restored")
+ok(Minimap.__mask == "round" and GetMinimapShape() == "ROUND" and MinimapBorder:IsShown(), "round minimap restored")
+local realConfig = MinimapCluster.UpdateMinimapConfig
+MinimapCluster.UpdateMinimapConfig = false
+ns.db.minimap.square = true
+ns:Fire("OPTIONS")
+ns.db.minimap.square = false
+ns:Fire("OPTIONS")
+ok(Minimap.__mask == "Textures\\MinimapMask", "old mask used without the cluster refresh")
+MinimapCluster.UpdateMinimapConfig = realConfig
 
 combat = true
 ns.db.minimap.scale = 1.2
@@ -235,7 +266,19 @@ ok(ns.db.minimap.locked == false, "unlock")
 SlashCmdList["AMAP"]("lock")
 ok(ns.db.minimap.locked == true, "lock")
 SlashCmdList["AMAP"]("reset")
-ok(ns.db.map.pos == nil and ns.db.minimap.scale == 1, "reset")
+ok(ns.db.map.pos == nil and ns.db.minimap.scale == 1 and MinimapCluster.__scale == 1, "reset")
+ns.db.map.window = false
+ns:Fire("OPTIONS")
+ok(WorldMapFrame.__scale == 1, "window mode off restores the scale")
+ns.db.map.window = true
+ns:Fire("OPTIONS")
+combat = true
+WorldMapFrame.__scripts.OnShow(WorldMapFrame)
+WorldMapFrame.__scripts.OnShow(WorldMapFrame)
+ok(ns.Queued() == 1, "repeated work queued once in combat " .. ns.Queued())
+combat = false
+event("PLAYER_REGEN_ENABLED")
+UpdateUIPanelPositions()
 SlashCmdList["AMAP"]("")
 local n = 0
 for _, e in ipairs(ns.Options()) do
@@ -255,6 +298,12 @@ tickAll(1)
 GetPlayerFacing = realFacing
 C_Map.GetPlayerMapPosition = function() return { x = secret, y = secret } end
 ok(ns.UnitPos(1429, "player") == nil, "secret position ignored")
+UnitClass = function() return secret, secret end
+UnitName = function() return secret end
+C_Map.GetPlayerMapPosition = function() return CreateVector2D(0.2, 0.2) end
+tickAll(1)
+C_Map.GetPlayerMapPosition = function() return nil end
+ok(ns.UnitPos(1429, "player") == nil, "no position inside an instance")
 tickAll(1)
 
 print_real(string.format("ok: %d checks", M.checks()))

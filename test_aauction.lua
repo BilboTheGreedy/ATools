@@ -294,7 +294,7 @@ ok(Sell.Price(2589) == 100, "match lowest")
 ns.db.sell.rule = "copper"
 Sell.lowest[2589] = 10
 price, source = Sell.Price(2589)
-ok(price == 14 and source == "floor", "never below vendor plus margin " .. price)
+ok(price == 15 and source == "floor", "never below vendor plus margin and the cut " .. price)
 Sell.lowest[2589] = 100
 ns.db.sell.prices[2589] = 250
 ok(select(2, Sell.Price(2589)) == "kept" and Sell.Price(2589) == 250, "remembered price wins")
@@ -468,6 +468,123 @@ SlashCmdList["AAUCTION"]("sell")
 ok(ns.UI.View() == "sell", "slash sell")
 frame.pricesTab.__scripts.OnClick(frame.pricesTab)
 frame.sellTab.__scripts.OnClick(frame.sellTab)
+event("AUCTION_HOUSE_CLOSED")
+
+local warn, confirmed = false, 0
+C_AuctionHouse.PostItem = function(loc, duration, qty, bid, buyout)
+	posts[#posts + 1] = { kind = "item", id = itemAt(loc).id, slot = loc.slot, duration = duration, qty = qty, bid = bid, price = buyout }
+	return warn
+end
+C_AuctionHouse.ConfirmPostItem = function() confirmed = confirmed + 1 end
+ns.db.sell.rule = "copper"
+event("AUCTION_HOUSE_SHOW")
+ok(Sell.Modern(), "modern posting again")
+
+itemResults = { { buyoutAmount = 26000, quantity = 3 }, { buyoutAmount = 31000, quantity = 1 } }
+event("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 2593 })
+flush()
+ok(Sell.lowest[2593] == 26000 and ns.Entry(2593).q == 4, "grouped item results keep the unit price")
+
+ITEM_CONJURED = "Conjured Item"
+info[2596] = { "Conjured Water", 1, 0, 0 }
+bags[0][10] = { id = 2596, n = 5 }
+C_TooltipInfo = {
+	GetBagItem = function(bag, slot)
+		local it = bags[bag][slot]
+		local lines = { { leftText = info[it.id][1] } }
+		if it.id == 2596 then lines[2] = { leftText = "Conjured Item" } end
+		return { lines = lines }
+	end,
+}
+ok(not Sell.Find(2596) and Sell.Find(2589), "conjured items are not listed")
+
+n = #posts
+M.mods.alt = true
+hooks.HandleModifiedItemClick(link(2589))
+ok(#posts == n, "alt-click on a link outside the bags posts nothing")
+M.mods.alt = false
+
+warn = true
+local e = Sell.Find(2593)
+ok(not Sell.NeedsConfirm(e), "plain item would post in one click")
+ok(Sell.Click(e) == "confirm" and Sell.awaiting and confirmed == 0, "a client warning stops the one-click post")
+ok(Sell.Click(e, { force = true }) == "posted" and confirmed == 1 and not Sell.awaiting, "pressing Post again confirms it")
+warn = false
+
+e.market = 100000
+ok(Sell.NeedsConfirm(e), "far below market needs the Post button")
+
+Sell.lowest[2589] = nil
+ns.Observe(2589, 95, 5)
+Sell.owned = { { id = 2589, unit = 95, qty = 5 } }
+local p, src = Sell.Price(2589)
+ok(p == 95 and src == "own", "does not undercut my own auction " .. tostring(p) .. " " .. tostring(src))
+Sell.owned = {}
+ok(Sell.Price(2589) == 94, "undercuts when it is not mine")
+
+C_AuctionHouse.SupportsCopperValues = function() return false end
+ok(Sell.Step() == 100, "silver steps when the client has no copper prices")
+info[2597] = { "Ore", 1, 7, 140 }
+bags[0][11] = { id = 2597, n = 1 }
+Sell.lowest[2597] = 290
+local sp, ss = Sell.Price(2597)
+ok(sp == 200 and ss == "floor", "silver rounding keeps the vendor floor " .. tostring(sp))
+Sell.lowest[2597] = 1250
+ok(Sell.Price(2597) == 1100, "undercut by one silver step " .. Sell.Price(2597))
+local ore = Sell.Find(2597)
+ok(Sell.Post(ore, { price = 1150 }) == false, "copper price refused")
+n = #posts
+ok(Sell.Post(ore, { price = 1100, bid = 95 }) == true and posts[#posts].price == 1100 and posts[#posts].bid == 1000, "bid rounded to silver")
+C_AuctionHouse.SupportsCopperValues = nil
+bags[0][11] = nil
+
+local browseQueries, moreCalls, full = 0, 0, false
+local page = {}
+C_AuctionHouse.SendBrowseQuery = function(q)
+	ok(type(q) == "table" and q.searchString == "" and type(q.sorts) == "table", "browse query shape")
+	browseQueries = browseQueries + 1
+end
+C_AuctionHouse.RequestMoreBrowseResults = function() moreCalls = moreCalls + 1 end
+C_AuctionHouse.HasFullBrowseResults = function() return full end
+C_AuctionHouse.GetBrowseResults = function() return page end
+clock = clock + 2000
+local scansBefore = ns.Realm().scans
+ok(ns.ScanKind() == "replicate" and ns.StartScan() == true, "full scan asked first")
+flush()
+ok(browseQueries == 1 and not ns.Scanning() and ns.CooldownLeft() == 0, "no answer falls back to browsing and keeps the cooldown free")
+ok(ns.StartScan("replicate") == true, "second try")
+flush()
+ok(ns.ScanKind() == "browse", "two silent full scans switch to browsing")
+ok(ns.StartScan() == true and ns.scan.state == "browsing", "browse scan started")
+page = {
+	{ itemKey = { itemID = 5001 }, minPrice = 300, totalQuantity = 10 },
+	{ itemKey = { itemID = 5002, itemLevel = 20 }, minPrice = 9000, totalQuantity = 1 },
+}
+event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+ok(moreCalls == 1 and ns.Scanning(), "asks for the next page")
+full = true
+event("AUCTION_HOUSE_BROWSE_RESULTS_ADDED", {
+	{ itemKey = { itemID = 5002, itemLevel = 25 }, minPrice = 7000, totalQuantity = 2 },
+	{ itemKey = { itemID = 5003 }, minPrice = 0, totalQuantity = 2 },
+})
+ok(ns.scan.state == "done" and ns.Realm().scans == scansBefore + 1, "browse scan finished")
+ok(AAuction.GetPrice(5001) == 300 and select(2, AAuction.GetPrice(5002)) == 7000 and select(5, AAuction.GetPrice(5002)) == 3, "browse prices stored")
+ok(AAuction.GetPrice(5003) == nil and select(5, ns.GetPrice(2589)) == 0, "unpriced rows skipped, unseen items emptied")
+ns.RetryFullScan()
+ok(ns.ScanKind() == "replicate", "fast scan can be tried again")
+flush()
+
+ns.Realm().items[9001] = { m = 1000, b = 500, q = 3, n = 3, t = clock }
+ns.Realm().items[9002] = { m = 1000, b = 900, q = 3, n = 3, t = clock }
+ns.Realm().items[9003] = { m = 1000, b = 100, q = 0, n = 3, t = clock }
+local dealRows = ns.Rows("", "name", false, true)
+ok(#dealRows == 1 and dealRows[1].id == 9001, "deals are items listed well below market")
+SlashCmdList["AAUCTION"]("deals")
+flush()
+ok(ns.UI.View() == "prices" and #frame.list.data == 1, "deals view")
+frame.dealsButton.__scripts.OnClick(frame.dealsButton)
+ok(#frame.list.data > 1, "deals off again")
+ok(#Sell.Durations() == 3, "duration names")
 event("AUCTION_HOUSE_CLOSED")
 
 print_real(string.format("ok: %d checks", M.checks()))

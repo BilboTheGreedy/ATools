@@ -178,6 +178,48 @@ ns:Fire("OPTIONS")
 ACooldownsFrame.__scripts.OnUpdate(ACooldownsFrame, 0.2)
 cds[102] = nil
 
+cds[100] = { startTime = secret(), duration = secret(), isActive = true, isOnGCD = false }
+event("SPELL_UPDATE_COOLDOWN")
+flush()
+ok(n.Recklessness.secret and n.Recklessness.ready == false, "secret cooldown known to be running")
+local function visible(e)
+	for _, v in ipairs(ns.Visible()) do
+		if v == e then return true end
+	end
+	return false
+end
+ns.db.show = "ready"
+ok(not visible(n.Recklessness), "running secret cooldown not in the ready list")
+ns.db.show = "cooling"
+ok(visible(n.Recklessness), "running secret cooldown in the cooling list")
+ns.db.show = "all"
+ok(ns.Announce(n.Recklessness) == "Recklessness is on cooldown", "announce secret state")
+ns.db.bars = true
+ns:Fire("OPTIONS")
+ACooldownsFrame.__scripts.OnUpdate(ACooldownsFrame, 0.2)
+ns.db.bars = false
+ns:Fire("OPTIONS")
+cds[100] = { startTime = secret(), duration = secret(), isActive = true, isOnGCD = true }
+event("SPELL_UPDATE_COOLDOWN")
+flush()
+ok(n.Recklessness.ready == true, "global cooldown ignored while secret")
+ACooldownsFrame.__scripts.OnUpdate(ACooldownsFrame, 0.2)
+ok(n.Recklessness.pulse == now, "secret cooldown pulses when ready")
+ok(ns.Announce(n.Recklessness) == "Recklessness is ready", "announce secret ready")
+cds[100] = nil
+event("SPELL_UPDATE_COOLDOWN")
+flush()
+
+ns.db.combatOnly = true
+ns:Fire("OPTIONS")
+ok(not ACooldownsFrame:IsShown(), "hidden out of combat")
+event("PLAYER_REGEN_DISABLED")
+ok(ACooldownsFrame:IsShown(), "shown in combat")
+event("PLAYER_REGEN_ENABLED")
+ns.db.combatOnly = false
+ns:Fire("OPTIONS")
+ok(ACooldownsFrame:IsShown(), "shown again")
+
 SlashCmdList["ACOOLDOWNS"]("add 7000")
 ok(ns.byKey["i:7000"] and ns.chardb.items[7000], "add item by id")
 itemCd[7000] = { 1170, 60 }

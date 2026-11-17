@@ -16,7 +16,7 @@ function GetXPExhaustion() return me.rested end
 function GetMoney() return me.money end
 function GetRealZoneText() return me.zone end
 function UnitRace() return "Human", "Human", 1 end
-function GetGuildInfo() return "Night Shift" end
+function GetGuildInfo() return "Night Shift", "Officer", 1 end
 function IsResting() return true end
 RAID_CLASS_COLORS = { WARRIOR = { r = 0.78, g = 0.61, b = 0.43 } }
 local skills = {
@@ -27,8 +27,15 @@ local skills = {
 }
 function GetNumSkillLines() return #skills end
 function GetSkillLineInfo(i) return unpack(skills[i], 1, 8) end
-function IsPlayerSpell(id) return id == 17187 end
-C_Spell.GetSpellCooldown = function() return { startTime = 400, duration = 86400 } end
+function IsPlayerSpell(id) return id == 18560 end
+C_Spell.GetSpellCooldown = function(id)
+	if id == 11479 then return { startTime = 400, duration = 86400 } end
+	return { startTime = 0, duration = 0 }
+end
+function GetMaxPlayerLevel() return 60 end
+local today = "2026-01-01"
+function date() return today end
+function GetInboxHeaderInfo(i) return nil, nil, "Bob", "Hi", 0, 0, i == 1 and 12.5 or 2.5 end
 function GetInventoryItemLink(_, slot)
 	if slot == 1 or slot == 16 then return "|cffa335ee|Hitem:" .. (16000 + slot) .. "|h[Thing " .. slot .. "]|h|r" end
 end
@@ -71,7 +78,8 @@ StaticPopup_Show = function(name) confirmed = StaticPopupDialogs[name] end
 
 M.load("ACore", "ACore")
 AAltsDB = { chars = { Stormrage = { Bankalt = { class = "MAGE", level = 5, money = 500000, faction = "Alliance", seen = clock - 200000, zone = "Ironforge" } },
-	Other = { Hordie = { class = "SHAMAN", level = 60, money = 77, faction = "Horde", seen = clock - 3000, lockouts = { { name = "Zul'Gurub", reset = clock + 5000 } } } } } }
+	Other = { Hordie = { class = "SHAMAN", level = 60, money = 77, faction = "Horde", seen = clock - 3000, mail = 2, mailExpire = clock + 86400,
+		cooldowns = { { name = "Mooncloth", ready = clock - 50 }, { name = "Transmute", ready = clock + 900 } }, lockouts = { { name = "Zul'Gurub", reset = clock + 5000 } } } } } }
 local ns = M.load("AAlts", "AAlts")
 event("PLAYER_LOGIN")
 
@@ -79,7 +87,8 @@ local c = ns.db.chars.Stormrage.Aldo
 ok(c and c.level == 42 and c.money == 1234567 and c.zone == "Tanaris" and c.guild == "Night Shift", "basics")
 ok(c.class == "WARRIOR" and c.faction == "Alliance" and c.race == "Human", "identity")
 ok(#c.profs == 3 and c.profs[1].main and c.profs[3].name == "Cooking", "professions " .. #c.profs)
-ok(#c.cooldowns == 1 and c.cooldowns[1].ready == clock + 86300, "cooldown")
+ok(#c.cooldowns == 2 and c.cooldowns[1].name == "Transmute" and c.cooldowns[1].ready == clock + 86300 and c.cooldowns[2].ready == 0, "cooldown")
+ok(c.guildRank == "Officer" and c.capped == false and c.dayStart == 1234567, "guild rank, day start")
 ok(c.gear[1] and c.gear[16] and c.ilvl == 58.5, "gear " .. tostring(c.ilvl))
 ok(c.bagTotal == 80 and c.bagFree == 15, "bags")
 ok(#c.reps == 2 and c.reps[1].name == "Stormwind" and c.reps[1].value == 9000 and c.reps[1].max == 21000, "reputations " .. #c.reps)
@@ -88,6 +97,11 @@ ok(c.rank and c.rank.name == "Knight" and c.newMail, "rank and mail flag")
 
 flush()
 ok(requested == 1 and quiet, "played requested quietly")
+local told = 0
+for _, line in ipairs(M.printed) do
+	if line:find("Mooncloth ready on Hordie", 1, true) or line:find("Mail on Hordie expires in 1 d 0 h", 1, true) then told = told + 1 end
+end
+ok(told == 2 and #ns.Alerts() == 0, "login alerts " .. told)
 event("TIME_PLAYED_MSG", 360000, 7200)
 flush()
 ok(c.played == 360000 and c.playedLevel == 7200 and chatEvents.TIME_PLAYED_MSG, "played stored, chat restored")
@@ -104,7 +118,28 @@ end
 flush()
 ok(c.money == 2000000 and c.level == 42, "money updated, secret level ignored")
 ok(c.bankTotal == 120 and c.bankFree == 22, "bank " .. tostring(c.bankTotal))
-ok(mailed and c.mail == 5 and c.mailSeen == clock, "mail")
+ok(mailed and c.mail == 5 and c.mailSeen == clock and c.mailExpire == clock + 216000, "mail")
+C_Spell.GetSpellCooldown = function() return SECRET end
+event("SPELL_UPDATE_COOLDOWN")
+flush()
+ok(#c.cooldowns == 2 and c.cooldowns[1].ready == clock + 86300, "cooldown kept when unreadable")
+local alt = ns.db.chars.Stormrage.Bankalt
+alt.xpMax, alt.rested, alt.resting = 1000, 100, true
+ok(math.abs(ns.Rested(alt) - 447.22) < 0.01, "rested grows offline " .. ns.Rested(alt))
+alt.seen = clock - 5000000
+ok(ns.Rested(alt) == 1500 and ns.Rested(c) == 6000, "rested cap")
+alt.capped = true
+ok(ns.Rested(alt) == 0, "no rested at cap")
+alt.capped, alt.seen = nil, clock - 200000
+me.money = 2000500
+event("PLAYER_MONEY")
+flush()
+ok(c.dayStart == 1234567, "day start kept")
+today = "2026-01-02"
+me.money = 2000000
+event("PLAYER_MONEY")
+flush()
+ok(c.dayStart == 2000500 and c.day == today, "new day")
 me.level = 42
 event("BANKFRAME_CLOSED")
 event("PLAYER_LOGOUT")
@@ -202,6 +237,14 @@ local row = frame.list.rows[1]
 row.data = frame.list.data[3]
 local victim = row.data.char.name
 row.__scripts.OnClick(row, "RightButton")
+row.data.char.note = "bank alt"
+ns.Window.ShowChar(row.data.char)
+local noted = false
+for _, d in ipairs(frame.list.data) do
+	if d.text == "Note: bank alt" then noted = true end
+end
+ok(noted, "note shown")
+frame.back.__scripts.OnClick(frame.back)
 ns.Delete(row.data.char)
 ok(#ns.All() == 2, "deleted " .. victim)
 ns.UI.Confirm("x", function() confirmed = "yes" end)

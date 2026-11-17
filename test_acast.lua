@@ -21,8 +21,15 @@ local casts, channels = {}, {}
 function UnitCastingInfo(unit)
 	local c = casts[unit]
 	if not c then return nil end
-	return c.name, c.name, c.icon or 1, c.s, c.e, false, c.id, c.shield, c.spell or 1
+	return c.name, c.name, c.icon or 1, c.s, c.e, c.trade or false, c.id, c.shield, c.spell or 1
 end
+function UnitName() return "Me" end
+function UnitNameFromGUID(guid) if guid == "Player-1" then return "Rogue" end end
+C_Spell = C_Spell or {}
+EditModeManagerFrame = M.obj("Frame")
+local editMode = false
+function EditModeManagerFrame:IsEditModeActive() return editMode end
+PetCastingBarFrame = M.obj("Frame")
 function UnitChannelInfo(unit)
 	local c = channels[unit]
 	if not c then return nil end
@@ -35,12 +42,23 @@ PlayerCastingBarFrame = M.obj("Frame")
 TargetFrameSpellBar = M.obj("Frame")
 
 M.load("ACore", "ACore")
+C_Spell.GetSpellSubtext = function(id) if id == 133 then return "Rank 2" end return "" end
+ACastDB = { profiles = { Default = { scale = 1.2, player = { default = { "TOP", "TOP", 0, 0 }, scale = 0.8 } } }, stamps = {} }
 local ns = M.load("ACast", "ACast")
 event("PLAYER_LOGIN")
 event("PLAYER_ENTERING_WORLD")
 
 local p, t = ACastPlayerBar, ACastTargetBar
-ok(p and t, "bars created")
+ok(p and t and ACastFocusBar and ACastPetBar, "bars created")
+ok(ns.db.scale == nil and ns.db.player.scale == 0.8 and ns.db.target.scale == 1.2, "scale kept per bar")
+ok(ns.db.player.default[1] == "CENTER", "stale default position replaced")
+ok(PetCastingBarFrame.__unregistered, "default pet cast bar hidden")
+editMode = true
+PlayerCastingBarFrame.__shown = true
+PlayerCastingBarFrame.__hooks.OnShow(PlayerCastingBarFrame)
+ok(PlayerCastingBarFrame:IsShown(), "default bar left alone in edit mode")
+editMode = false
+PlayerCastingBarFrame.__shown = false
 ok(not p:IsShown() and not t:IsShown(), "hidden when idle")
 ok(PlayerCastingBarFrame.__unregistered and not PlayerCastingBarFrame:IsShown(), "default bar hidden")
 PlayerCastingBarFrame.__shown = true
@@ -57,7 +75,7 @@ clock = clock + 0.1
 casts.player = { name = "Fireball", s = clock * 1000, e = (clock + 3) * 1000, id = "c1" }
 event("UNIT_SPELLCAST_START", "player", "c1", 133)
 ok(p:IsShown() and p.mode == "cast", "cast started")
-ok(p.bar.left.__text == "Fireball", "cast name")
+ok(p.bar.left.__text == "Fireball |cffb4b6be> Target|r", "cast name with target " .. tostring(p.bar.left.__text))
 ok(math.abs(p.bar.__max - 3) < 0.001, "cast range")
 ok(p.lag:IsShown() and math.abs(p.lagValue - 0.1) < 0.001, "latency zone from sent time")
 tick(p, 1)
@@ -81,8 +99,10 @@ ok(p.__alpha and p.__alpha < 1, "fading alpha")
 tick(p, 1)
 ok(not p:IsShown(), "hidden after fade")
 
+event("UNIT_SPELLCAST_SENT", "player", "Me", "c2", 116)
 casts.player = { name = "Frostbolt", s = clock * 1000, e = (clock + 2.5) * 1000, id = "c2" }
 event("UNIT_SPELLCAST_START", "player", "c2", 116)
+ok(p.bar.left.__text == "Frostbolt", "own name is not shown as the target")
 tick(p, 0.5)
 casts.player = nil
 event("UNIT_SPELLCAST_INTERRUPTED", "player", "c2", 116)
@@ -100,6 +120,61 @@ event("UNIT_SPELLCAST_STOP", "player", "c3", 2054)
 event("UNIT_SPELLCAST_INTERRUPTED", "player", "c3", 2054)
 ok(p.bar.left.__text == "Interrupted", "interrupt after stop still flashes")
 tick(p, 2)
+
+casts.player = { name = "Heal", s = clock * 1000, e = (clock + 2) * 1000, id = "c3b" }
+event("UNIT_SPELLCAST_START", "player", "c3b", 2054)
+ok(p.bar.left.__text == "Heal", "old target not reused")
+casts.player = nil
+event("UNIT_SPELLCAST_INTERRUPTED", "player", "c3b", 2054, "Player-1", 7)
+ok(p.bar.left.__text == "Interrupted (Rogue)", "interrupter named " .. tostring(p.bar.left.__text))
+tick(p, 2)
+casts.player = { name = "Heal", s = clock * 1000, e = (clock + 2) * 1000, id = "c3c" }
+event("UNIT_SPELLCAST_START", "player", "c3c", 2054)
+casts.player = nil
+event("UNIT_SPELLCAST_INTERRUPTED", "player", "c3c", 2054, SECRET, 7)
+ok(p.bar.left.__text == "Interrupted", "secret interrupter ignored")
+tick(p, 2)
+
+ns.db.rank = true
+casts.player = { name = "Fireball", s = clock * 1000, e = (clock + 2) * 1000, id = "c3d", spell = 133 }
+event("UNIT_SPELLCAST_START", "player", "c3d", 133)
+ok(p.bar.left.__text == "Fireball (Rank 2)", "rank text " .. tostring(p.bar.left.__text))
+ns.db.rank = false
+casts.player = nil
+event("UNIT_SPELLCAST_STOP", "player", "c3d", 133)
+tick(p, 2)
+SPELL_INTERRUPTED_BY = "Interrupted by %s"
+casts.player = { name = "Heal", s = clock * 1000, e = (clock + 2) * 1000, id = "c3f" }
+event("UNIT_SPELLCAST_START", "player", "c3f", 2054)
+casts.player = nil
+event("UNIT_SPELLCAST_INTERRUPTED", "player", "c3f", 2054, "Player-1", 7)
+ok(p.bar.left.__text == "Interrupted by Rogue", "client text for the interrupter")
+SPELL_INTERRUPTED_BY = nil
+tick(p, 2)
+
+event("UNIT_SPELLCAST_SENT", "player", "Boar", "ch1", 15407)
+channels.player = { name = "Mind Flay", s = clock * 1000, e = (clock + 3) * 1000 }
+event("UNIT_SPELLCAST_CHANNEL_START", "player", nil, 15407)
+event("UNIT_SPELLCAST_CHANNEL_UPDATE", "player", nil, 15407)
+ok(p.bar.left.__text == "Mind Flay |cffb4b6be> Boar|r", "channel keeps its target after an update")
+channels.player = nil
+event("UNIT_SPELLCAST_CHANNEL_STOP", "player", nil, 15407, "Player-1", 9)
+ok(p.bar.left.__text == "Interrupted (Rogue)" and p.bar.__color[1] > 0.8, "interrupted channel")
+tick(p, 2)
+
+local f, pt = ACastFocusBar, ACastPetBar
+casts.focus = { name = "Polymorph", s = clock * 1000, e = (clock + 1.5) * 1000, id = "f1" }
+event("PLAYER_FOCUS_CHANGED")
+ok(f:IsShown() and f.mode == "cast" and f.bar.left.__text == "Polymorph", "focus cast bar")
+casts.focus = nil
+event("PLAYER_FOCUS_CHANGED")
+ok(not f:IsShown(), "focus bar hidden")
+casts.pet = { name = "Bite", s = clock * 1000, e = (clock + 1) * 1000, id = "pe1" }
+event("UNIT_SPELLCAST_START", "pet", "pe1", 17253)
+ok(pt:IsShown() and pt.mode == "cast", "pet cast bar")
+casts.pet = nil
+event("UNIT_PET", "player")
+ok(not pt:IsShown(), "pet bar cleared when the pet changes")
 
 casts.player = { name = "Smite", s = clock * 1000, e = (clock + 2) * 1000, id = "c4" }
 event("UNIT_SPELLCAST_START", "player", "c4", 585)
@@ -220,7 +295,25 @@ casts.player = { name = "Bolt", s = clock * 1000, e = (clock + 3) * 1000, id = "
 event("UNIT_SPELLCAST_START", "player", "p9", 1)
 tick(p, 1)
 ok(p.bar.right.__text == "" and not p.lag:IsShown(), "time and latency off")
-for _, a in ipairs(ACore.addons) do if a.name == "ACast" then a.toggle() end end
+local mover
+for _, m in ipairs(ACore.movers) do
+	if m.frame == p then mover = m end
+end
+ok(mover and mover.enabled(), "player bar in layout mode")
+ACore.ScaleMover(mover, 1.5)
+ns.Apply()
+ok(ns.db.player.scale == 1.5 and ns.db.target.scale == 1, "layout mode size survives apply")
+for _, a in ipairs(ACore.addons) do
+	if a.name == "ACast" then
+		a.toggle()
+		local opts = a.options()
+		ok(#opts > 20, "panel options " .. #opts)
+		for _, e in ipairs(opts) do
+			if e.func and e.text == "135%" then e.func() end
+		end
+	end
+end
+ok(ns.db.player.scale == 1.35 and ns.db.pet.scale == 1.35, "size option sets every bar")
 flush()
 
 print_real(string.format("ok: %d checks (acast)", M.checks()))

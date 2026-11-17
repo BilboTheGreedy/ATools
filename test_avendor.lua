@@ -42,8 +42,9 @@ function GetMerchantItemMaxStack(i) return items[i].stackCount > 1 and 1 or 20 e
 function BuyMerchantItem(i, n)
 	local it = items[i]
 	bought[#bought + 1] = { i, n }
-	counts[it.id] = (counts[it.id] or 0) + n * it.stackCount
-	gold = gold - it.price * n
+	local units = n or it.stackCount
+	counts[it.id] = (counts[it.id] or 0) + units
+	gold = gold - it.price * units / it.stackCount
 end
 function GetMoney() return gold end
 C_Item.GetItemCount = function(id) return counts[id] or 0 end
@@ -209,6 +210,31 @@ ns.db.protect = false
 ok(ns.Protect.Reason({ id = 901, quality = 4 }) == nil, "protection off")
 ok(ns.Protect.Reason({ id = 502, quality = 1 }) ~= nil, "never-sell always asks")
 ns.db.protect = true
+ok(AVendor.IsProtected(502, nil, 1) and not AVendor.IsProtected(501, nil, 0), "protection check for other addons")
+
+bags[0][6] = { itemID = 600, hyperlink = "|Hitem:600|h[Scrap]|h", quality = 1, stackCount = 5 }
+bags[0][7] = { itemID = 600, hyperlink = "|Hitem:600|h[Scrap]|h", quality = 1, stackCount = 2 }
+bags[0][8] = { itemID = 601, hyperlink = "|Hitem:601|h[Bound]|h", quality = 1, stackCount = 1, hasNoValue = true }
+SlashCmdList["AVENDOR"]("sell 600")
+SlashCmdList["AVENDOR"]("sell 601")
+SlashCmdList["AVENDOR"]("sell")
+ok(ns.db.alwaysSell[600], "slash sell")
+event("MERCHANT_CLOSED")
+local soldBefore, returnedBefore = #sold, returned
+event("MERCHANT_SHOW")
+flush()
+ok(#sold - soldBefore == 2 and not slotOf(600) and slotOf(601), "always-sell list sold " .. (#sold - soldBefore))
+ok(returned == returnedBefore, "listed sales are not bought back")
+local listed
+for _, p in ipairs(printed) do if p:find("sold 2 listed stacks") then listed = true end end
+ok(listed, "listed sale summary")
+SlashCmdList["AVENDOR"]("keep 600")
+ok(ns.db.neverSell[600] and not ns.db.alwaysSell[600], "keep removes from always-sell")
+ns.db.neverSell[600] = nil
+ns.db.alwaysSell[601] = nil
+local bundles = 0
+for _, b in ipairs(bought) do if b[1] == 1 and b[2] ~= nil then bundles = bundles + 1 end end
+ok(bundles == 0, "bundles are bought without a quantity")
 event("MERCHANT_CLOSED")
 
 SlashCmdList["AVENDOR"]("")
@@ -239,6 +265,16 @@ ok(ns.db.neverSell[777], "add never-sell by link")
 row = frame.list.rows[1]
 row.__scripts.OnClick(row, "LeftButton")
 clickMenu("Remove")
+ns.db.alwaysSell[650] = true
+frame.sellTab.__scripts.OnClick(frame.sellTab, "LeftButton")
+ok(#frame.list.data == 1 and frame.list.data[1].id == 650, "always-sell rows")
+answer = "651"
+frame.addButton.__scripts.OnClick(frame.addButton, "LeftButton")
+ok(ns.db.alwaysSell[651], "add always-sell by id")
+row = frame.list.rows[1]
+row.__scripts.OnClick(row, "LeftButton")
+clickMenu("Remove")
+ok(not ns.db.alwaysSell[650], "always-sell row removed")
 frame.restockTab.__scripts.OnClick(frame.restockTab, "LeftButton")
 frame.nowButton.__scripts.OnClick(frame.nowButton, "LeftButton")
 event("BAG_UPDATE_DELAYED")

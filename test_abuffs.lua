@@ -175,6 +175,91 @@ for _, class in ipairs({ "WARRIOR", "DRUID", "MAGE", "PRIEST", "WARLOCK", "PALAD
 	ns.RefreshReminders()
 	ns.ReminderEntries()
 end
+
+ns.playerClass = "WARRIOR"
+ns.db.off = {}
+ns.db.hidden = {}
+ns.db.reminders = true
+combat = false
+helpful[1] = { name = "Mount", icon = 2, applications = 0, duration = 0, expirationTime = 0, spellId = 5, auraInstanceID = 2 }
+helpful[2] = { name = "Stacks", icon = 3, applications = 4, duration = 600, expirationTime = now + 300, spellId = 6, auraInstanceID = 3 }
+harmful[1] = { name = "Poisoned", icon = 4, applications = 2, duration = 12, expirationTime = now + 8, dispelName = "Poison", spellId = 7, auraInstanceID = 4 }
+ns.Refresh()
+ok(g.buffs.shown == 2, "buffs back " .. g.buffs.shown)
+local stacks
+for i = 1, g.buffs.shown do
+	if g.buffs.icons[i].aura.name == "Stacks" then stacks = g.buffs.icons[i] end
+end
+M.mods.shift = true
+cancelled = nil
+stacks.__scripts.OnClick(stacks, "RightButton")
+M.mods.shift = false
+flush()
+ok(ns.db.hidden.Stacks and g.buffs.shown == 1 and cancelled == nil, "shift-right-click hides a buff")
+ok(#ns.buffs == 2, "hidden buffs still count for reminders")
+local shownAgain = false
+for _, e in ipairs(ns.Options()) do
+	if e.text == "Stacks" and e.func then e.func() shownAgain = true end
+end
+flush()
+ok(shownAgain and g.buffs.shown == 2, "hidden buff restored from options")
+
+ns.db.clock = true
+ok(ns.TimeText(100) == "1:40" and ns.TimeText(40) == "40", "clock format")
+ns.db.clock = false
+ns.db.size = 32
+ns.db.debuffScale = 1
+ns.Refresh()
+ok(g.debuffs.icons[1].__w == 32, "debuff size same")
+ns.db.debuffScale = 1.75
+ns.Refresh()
+ok(g.debuffs.icons[1].__w == 56, "debuff size huge")
+
+local parent
+BuffFrame.SetParent = function(_, p) parent = p end
+ns.db.hideBlizzard = true
+ns.HideBlizzard()
+ok(parent and parent ~= UIParent, "blizzard frame hidden again")
+ns.db.hideBlizzard = false
+ns.HideBlizzard()
+ok(parent == UIParent, "blizzard frame restored")
+
+function GetNumGroupMembers() return 2 end
+function UnitExists(u) return u == "party1" or u == "raid1" end
+function UnitClass(u)
+	if u == "party1" or u == "raid1" then return "Priest", "PRIEST" end
+	return "Warrior", "WARRIOR"
+end
+names[1243] = "Power Word: Fortitude"
+keys = {}
+for _, m in ipairs(ns.Missing()) do keys[m.entry.key] = m end
+ok(keys.gfort and keys.gfort.label == "Power Word: Fortitude" and not keys.gmotw, "group buff reminder")
+helpful[3] = { name = "Power Word: Fortitude", icon = 6, applications = 0, duration = 1800, expirationTime = now + 900, spellId = 1243, auraInstanceID = 11 }
+ns.Refresh()
+keys = {}
+for _, m in ipairs(ns.Missing()) do keys[m.entry.key] = m end
+ok(not keys.gfort and not keys.flask, "group buff present, flask off by default")
+ns.db.off.flask = false
+function IsInRaid() return true end
+keys = {}
+for _, m in ipairs(ns.Missing()) do keys[m.entry.key] = m end
+ok(keys.flask, "flask reminder in raids")
+function IsInRaid() return false end
+helpful[3] = nil
+
+C_PaperDollInfo = { GetTemporaryEnchantmentInfo = function(slot)
+	if slot == 16 then return { enchantID = 1, remainingTimeMs = 30000, chargesRemaining = 5, hasExpirationTime = true } end
+end }
+local en = ns.ReadEnchants()
+ok(#en == 1 and en[1].enchant == 16 and en[1].duration == 30 and en[1].count == 5, "temporary enchant api")
+C_PaperDollInfo = nil
+local oldInfo = GetWeaponEnchantInfo
+GetWeaponEnchantInfo = nil
+keys = {}
+for _, m in ipairs(ns.Missing()) do keys[m.entry.key] = m end
+ok(not keys.stone and #ns.ReadEnchants() == 0, "no weapon reminder without an enchant api")
+GetWeaponEnchantInfo = oldInfo
+
 C_UnitAuras.GetAuraDataByIndex = nil
 C_UnitAuras = nil
 function UnitAura(_, i, filter)
